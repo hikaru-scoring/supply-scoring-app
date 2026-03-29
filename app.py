@@ -350,11 +350,11 @@ def _render_ego_network(G, company, radius=2):
 # ---------------------------------------------------------------------------
 
 LOGIC_DESC = {
-    "Contract Volume": "Total contract value (prime + sub) and number of contracts, percentile-ranked against peers.",
-    "Diversification": "Number of different agencies and prime contractors. Single-client concentration reduces score.",
-    "Contract Continuity": "Years of active government contracting. Consecutive-year bonuses for recurring relationships.",
-    "Network Position": "Prime contractor status, sub-contractor network size, and supply chain hub importance.",
-    "Growth Momentum": "Year-over-year change in contract value, percentile-ranked. New contract acquisition bonus.",
+    "Contract Volume": "Total government contract value and count, with growth bonus. YoY growth adds up to +40 or penalizes -20.",
+    "Diversification": "Number of agencies and prime contractors. Concentration penalty if over-reliant on one source.",
+    "Contract Continuity": "Years of continuous government contracting. Consecutive years earn bonus.",
+    "Network Position": "Prime vs sub-contractor status, network hub importance.",
+    "Digital Resilience": "SSL certificate health and email security (SPF/DMARC). Powered by CYBER-1000 engine.",
 }
 
 
@@ -522,9 +522,9 @@ def main():
 
 **Rankings** shows all scored companies in a card-based ranking format.
 
-**Scoring axes:** Contract Volume, Diversification, Contract Continuity, Network Position, and Growth Momentum. Each axis is scored 0-200 using percentile ranking.
+**Scoring axes:** Contract Volume (with growth bonus), Diversification, Contract Continuity, Network Position, and Digital Resilience. Each axis is scored 0-200.
 
-**Data source:** USAspending.gov (free, public API). All data is live from the US government's official spending database.
+**Data source:** USAspending.gov (free, public API) + direct SSL/DNS scanning for Digital Resilience (powered by CYBER-1000 engine).
 """)
 
         # Load top companies
@@ -699,10 +699,26 @@ def main():
                     break
 
             if existing:
-                data = existing
+                # Re-score with cyber scan enabled for detail view
+                data = dict(existing)
+                from data_logic import _guess_domain, _scan_domain_quick
+                domain = data.get("domain") or _guess_domain(selected_name)
+                if domain:
+                    with st.spinner(f"Scanning {domain} for Digital Resilience..."):
+                        cyber_score, cyber_detail = _scan_domain_quick(domain)
+                    data["domain"] = domain
+                    data["digital_score_detail"] = cyber_detail
+                    # Recalculate with real cyber score
+                    four_axes = sum(
+                        data["axes"][k] for k in ["Contract Volume", "Diversification",
+                                                   "Contract Continuity", "Network Position"]
+                    )
+                    data["axes"]["Digital Resilience"] = cyber_score
+                    data["total"] = four_axes + cyber_score
             else:
                 with st.spinner(f"Building profile for {selected_name}..."):
                     profile = get_company_profile(selected_name)
+                    profile["_run_cyber_scan"] = True
                     data = score_company(profile, [profile])
 
             # Save/Clear buttons
@@ -752,6 +768,8 @@ def main():
                             st.markdown(f"- Prime value: {_fmt_dollar(data.get('total_prime_value', 0))}")
                             st.markdown(f"- Sub value: {_fmt_dollar(data.get('total_sub_value', 0))}")
                             st.markdown(f"- Contract count: {data.get('contract_count', 0)}")
+                            yoy = data.get("yoy_change", 0)
+                            st.markdown(f"- YoY growth (bonus): {yoy:+.1%}")
                         elif axis == "Diversification":
                             st.markdown(f"- Agencies worked with: {data.get('agency_count', 0)}")
                             st.markdown(f"- Prime contractors (as sub): {data.get('prime_contractor_count', 0)}")
@@ -761,9 +779,22 @@ def main():
                             st.markdown(f"- Sub-contractors managed: {data.get('sub_contractor_count', 0)}")
                             has_prime = data.get("total_prime_value", 0) > 0
                             st.markdown(f"- Is prime contractor: {'Yes' if has_prime else 'No'}")
-                        elif axis == "Growth Momentum":
-                            yoy = data.get("yoy_change", 0)
-                            st.markdown(f"- YoY change: {yoy:+.1%}")
+                        elif axis == "Digital Resilience":
+                            domain = data.get("domain", "N/A")
+                            detail = data.get("digital_score_detail")
+                            if detail:
+                                st.markdown(f"""
+**Formula:** `SSL Health (50%) + Email Security (50%)`
+**Raw Data:** Domain: {domain} | SSL: {detail.get('ssl', 'N/A')}/200 | Email: {detail.get('email', 'N/A')}/200
+**Source:** Direct SSL/DNS scan of company domain
+                                """)
+                            else:
+                                st.markdown(f"""
+**No domain scanned for this company.**
+Companies without a scanned domain show a proportionally estimated Digital Resilience score.
+To get a real score, view the company in Company Detail (triggers live scan).
+Domain guess: {domain}
+                                """)
 
             # Key metrics
             st.markdown("<div class='section-title'>KEY METRICS</div>", unsafe_allow_html=True)
@@ -985,17 +1016,17 @@ def main():
                 st.markdown("""
 **SUPPLY-1000 Scoring Methodology**
 
-Each company is scored on 5 axes (0-200 each, total 0-1000) using percentile ranking among all scored companies.
+Each company is scored on 5 axes (0-200 each, total 0-1000).
 
 | Axis | Weight | Description |
 |------|--------|-------------|
-| Contract Volume | 0-200 | Total contract value and count, percentile-ranked |
-| Diversification | 0-200 | Agency diversity and client concentration |
+| Contract Volume | 0-200 | Total contract value and count, with YoY growth bonus (-20 to +40) |
+| Diversification | 0-200 | Agency diversity and client concentration penalty |
 | Contract Continuity | 0-200 | Years active with consecutive-year bonuses |
 | Network Position | 0-200 | Prime/sub status and hub importance |
-| Growth Momentum | 0-200 | YoY contract value change and new acquisitions |
+| Digital Resilience | 0-200 | SSL certificate health + email security (SPF/DMARC). Powered by CYBER-1000 engine. |
 
-**Data source:** USAspending.gov, the official source for US government spending data. Updated daily by the US Treasury.
+**Data sources:** USAspending.gov (contract data) + direct SSL/DNS scanning (Digital Resilience). Updated daily by the US Treasury. Digital Resilience is scanned live when viewing Company Detail.
 """)
         else:
             st.warning("No scoring data available. Please try again later.")

@@ -1,6 +1,10 @@
 # data_logic.py
 """USASpending.gov API data fetching and SUPPLY-1000 scoring logic."""
+import re
+import socket
+import ssl
 import time
+from datetime import datetime, timezone
 
 try:
     import streamlit as st
@@ -17,7 +21,7 @@ AXES_LABELS = [
     "Diversification",
     "Contract Continuity",
     "Network Position",
-    "Growth Momentum",
+    "Digital Resilience",
 ]
 
 BASE_URL = "https://api.usaspending.gov/api/v2"
@@ -254,6 +258,7 @@ def get_company_profile(company_name: str) -> dict:
     profile["prime_contractors"] = list(profile["prime_contractors"])
     profile["sub_contractors"] = list(profile["sub_contractors"])
     profile["years_active"] = sorted(list(profile["years_active"]))
+    profile["domain"] = _guess_domain(profile["name"])
 
     return profile
 
@@ -415,6 +420,187 @@ def _percentile_rank(value: float, all_values: list[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Cyber scanning functions (simplified from CYBER-1000)
+# ---------------------------------------------------------------------------
+
+def _fetch_ssl(domain):
+    """Fetch SSL certificate data by direct connection."""
+    try:
+        ctx = ssl.create_default_context()
+        with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+            s.settimeout(5)
+            s.connect((domain, 443))
+            cert = s.getpeercert()
+            not_after = cert.get("notAfter", "")
+            issuer = dict(x[0] for x in cert.get("issuer", []))
+            org = issuer.get("organizationName", "Unknown")
+            expiry = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
+            days_left = (expiry - datetime.now(timezone.utc).replace(tzinfo=None)).days
+            return {
+                "days_until_expiry": days_left,
+                "issuer": org,
+                "expiry_date": not_after,
+            }
+    except Exception:
+        pass
+    return {"days_until_expiry": -1, "issuer": "Unknown", "expiry_date": ""}
+
+
+def _fetch_dns_security(domain):
+    """Fetch SPF and DMARC records from Google DNS API."""
+    result = {"has_spf": False, "has_dmarc": False, "dmarc_policy": "none", "has_dkim": False}
+    try:
+        # SPF
+        r = requests.get(f"https://dns.google/resolve?name={domain}&type=TXT", timeout=5)
+        if r.status_code == 200:
+            for a in r.json().get("Answer", []):
+                if "v=spf1" in a.get("data", ""):
+                    result["has_spf"] = True
+                    break
+
+        # DMARC
+        r2 = requests.get(f"https://dns.google/resolve?name=_dmarc.{domain}&type=TXT", timeout=5)
+        if r2.status_code == 200:
+            answers = r2.json().get("Answer", [])
+            if answers:
+                result["has_dmarc"] = True
+                for a in answers:
+                    data = a.get("data", "")
+                    if "p=reject" in data:
+                        result["dmarc_policy"] = "reject"
+                    elif "p=quarantine" in data:
+                        result["dmarc_policy"] = "quarantine"
+                    elif "p=none" in data:
+                        result["dmarc_policy"] = "none"
+
+        # DKIM (check for google selector as common case)
+        r3 = requests.get(f"https://dns.google/resolve?name=google._domainkey.{domain}&type=TXT", timeout=5)
+        if r3.status_code == 200:
+            if r3.json().get("Answer"):
+                result["has_dkim"] = True
+    except Exception:
+        pass
+    return result
+
+
+def _score_ssl_health(ssl_data):
+    """200 = strong SSL. Penalized by short expiry, weak issuer."""
+    days = ssl_data.get("days_until_expiry", -1)
+    issuer = ssl_data.get("issuer", "Unknown")
+
+    if days < 0:
+        return 100  # Can't check
+
+    # Days until expiry
+    if days >= 180:
+        expiry_score = 80
+    elif days >= 90:
+        expiry_score = 60
+    elif days >= 30:
+        expiry_score = 40
+    elif days >= 7:
+        expiry_score = 20
+    else:
+        expiry_score = 0  # About to expire or expired
+
+    # Issuer quality
+    premium_issuers = ["DigiCert", "GlobalSign", "Sectigo", "Entrust"]
+    free_issuers = ["Let's Encrypt"]
+
+    issuer_lower = issuer.lower()
+    if any(p.lower() in issuer_lower for p in premium_issuers):
+        issuer_score = 60
+    elif any(f.lower() in issuer_lower for f in free_issuers):
+        issuer_score = 40  # Free = works but signals smaller budget
+    else:
+        issuer_score = 50  # Unknown issuer or self-managed PKI
+
+    # Has HTTPS at all
+    has_ssl_score = 60 if days >= 0 else 0
+
+    return _clamp(expiry_score + issuer_score + has_ssl_score)
+
+
+def _score_email_security(dns_data):
+    """200 = full email security. Based on SPF + DMARC + DKIM + policy strength."""
+    score = 0
+
+    # SPF (max 60)
+    if dns_data.get("has_spf"):
+        score += 60
+
+    # DMARC (max 60)
+    if dns_data.get("has_dmarc"):
+        score += 40
+        # DMARC policy strength
+        policy = dns_data.get("dmarc_policy", "none")
+        if policy == "reject":
+            score += 20  # Strongest
+        elif policy == "quarantine":
+            score += 10
+        # "none" = 0 additional
+
+    # DKIM (max 40)
+    if dns_data.get("has_dkim"):
+        score += 40
+
+    # Base score for having any email config (max 40)
+    if dns_data.get("has_spf") or dns_data.get("has_dmarc"):
+        score += 40
+
+    return _clamp(score)
+
+
+def _guess_domain(company_name):
+    """Try to guess a company's domain from their name.
+    e.g. "LOCKHEED MARTIN CORPORATION" -> "lockheedmartin.com"
+    "THE BOEING COMPANY" -> "boeing.com"
+    Returns domain string or None.
+    """
+    name = company_name.upper()
+    # Remove common suffixes
+    for suffix in [" CORPORATION", " CORP", " INC", " LLC", " LTD", " CO",
+                   " COMPANY", " THE", " LP", " LLP", " GROUP", " HOLDINGS",
+                   " SERVICES", " TECHNOLOGIES", " SOLUTIONS"]:
+        name = name.replace(suffix, "")
+    name = name.strip()
+    # Remove leading "THE "
+    if name.startswith("THE "):
+        name = name[4:]
+    # Remove punctuation
+    name = re.sub(r'[^A-Z0-9 ]', '', name)
+    # Remove extra spaces and join
+    parts = name.split()
+    if not parts:
+        return None
+    # Try variations
+    domain_guess = "".join(parts).lower() + ".com"
+    return domain_guess
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _scan_domain_quick(domain):
+    """Quick cyber scan of a domain. Returns 0-200 score.
+    Uses SSL health (100pt) + Email Security (100pt).
+    Simplified version of CYBER-1000.
+    Also returns detail dict for display.
+    """
+    if not domain:
+        return 0, None
+
+    ssl_data = _fetch_ssl(domain)
+    dns_data = _fetch_dns_security(domain)
+
+    ssl_score = _score_ssl_health(ssl_data)  # 0-200
+    email_score = _score_email_security(dns_data)  # 0-200
+
+    # Combine: SSL 50% + Email 50%, scale to 0-200
+    combined = (ssl_score + email_score) / 2
+    detail = {"ssl": ssl_score, "email": email_score}
+    return _clamp(combined), detail
+
+
+# ---------------------------------------------------------------------------
 # Score a single company
 # ---------------------------------------------------------------------------
 
@@ -438,11 +624,32 @@ def score_company(profile: dict, all_profiles: list[dict]) -> dict:
 
     # -------------------------------------------------------------------
     # Axis 1: Contract Volume (0-200)
-    # Total contract value + number of contracts, percentile ranked
+    # Total contract value + number of contracts + growth bonus
     # -------------------------------------------------------------------
     value_pct = _percentile_rank(this_total_value, all_total_values)
     count_pct = _percentile_rank(profile["contract_count"], all_contract_counts)
-    contract_volume = _clamp(value_pct * 140 + count_pct * 60)
+
+    # YoY growth calculation (absorbed from Growth Momentum)
+    yearly = profile["yearly_values"]
+    if len(yearly) >= 2:
+        sorted_years = sorted(yearly.keys())
+        latest_year = sorted_years[-1]
+        prev_year_key = sorted_years[-2]
+        latest_val = yearly[latest_year]
+        prev_val = yearly[prev_year_key]
+
+        if prev_val > 0:
+            yoy_change = (latest_val - prev_val) / prev_val
+        elif latest_val > 0:
+            yoy_change = 1.0  # new entrant with value
+        else:
+            yoy_change = 0
+    else:
+        yoy_change = 0
+
+    # Growth bonus inside Contract Volume
+    growth_bonus = min(max(yoy_change * 40, -20), 40)  # -20 to +40 bonus
+    contract_volume = _clamp(value_pct * 120 + count_pct * 40 + growth_bonus)
 
     # -------------------------------------------------------------------
     # Axis 2: Diversification (0-200)
@@ -504,44 +711,16 @@ def score_company(profile: dict, all_profiles: list[dict]) -> dict:
     network_position = _clamp(position_base + sub_score + hub_bonus)
 
     # -------------------------------------------------------------------
-    # Axis 5: Growth Momentum (0-200)
-    # YoY change in contract value + new contracts
+    # Axis 5: Digital Resilience (0-200)
+    # Quick cyber scan of the company's domain
+    # Only scanned on-demand (Company Detail), not during batch ranking
     # -------------------------------------------------------------------
-    yearly = profile["yearly_values"]
-    if len(yearly) >= 2:
-        sorted_years = sorted(yearly.keys())
-        latest_year = sorted_years[-1]
-        prev_year = sorted_years[-2]
-        latest_val = yearly[latest_year]
-        prev_val = yearly[prev_year]
-
-        if prev_val > 0:
-            yoy_change = (latest_val - prev_val) / prev_val
-        elif latest_val > 0:
-            yoy_change = 1.0  # new entrant with value
-        else:
-            yoy_change = 0
-    else:
-        yoy_change = 0
-
-    # Map growth to score: -50% or worse = 0, +100% or better = 160
-    all_growths = []
-    for p in all_profiles:
-        yv = p["yearly_values"]
-        if len(yv) >= 2:
-            sy = sorted(yv.keys())
-            pv = yv[sy[-2]]
-            if pv > 0:
-                all_growths.append((yv[sy[-1]] - pv) / pv)
-    if all_growths:
-        growth_pct = _percentile_rank(yoy_change, all_growths)
-    else:
-        growth_pct = 0.5
-
-    # New contract bonus
-    new_contract_bonus = min(profile["contract_count"] * 3, 40)
-
-    growth_momentum = _clamp(growth_pct * 160 + new_contract_bonus)
+    domain = profile.get("domain") or _guess_domain(profile["name"])
+    digital_resilience = None
+    digital_score_detail = None
+    if profile.get("_run_cyber_scan"):
+        digital_resilience, digital_score_detail = _scan_domain_quick(domain) if domain else (0, None)
+    # If not scanned, use None (will be handled by proportional scaling)
 
     # -------------------------------------------------------------------
     # Assemble result
@@ -551,9 +730,17 @@ def score_company(profile: dict, all_profiles: list[dict]) -> dict:
         "Diversification": diversification,
         "Contract Continuity": contract_continuity,
         "Network Position": network_position,
-        "Growth Momentum": growth_momentum,
     }
-    total = sum(axes.values())
+
+    if digital_resilience is not None:
+        axes["Digital Resilience"] = digital_resilience
+        total = sum(axes.values())
+    else:
+        # Proportional scaling: scale 4-axis total (0-800) to 0-1000
+        four_axis_total = sum(axes.values())
+        total = round(four_axis_total * 1000 / 800)
+        # Estimate Digital Resilience proportionally for display
+        axes["Digital Resilience"] = round(four_axis_total * 200 / 800)
 
     return {
         "name": name,
@@ -569,6 +756,8 @@ def score_company(profile: dict, all_profiles: list[dict]) -> dict:
         "years_active": years_active,
         "yearly_values": yearly,
         "yoy_change": yoy_change,
+        "domain": domain,
+        "digital_score_detail": digital_score_detail,
     }
 
 
