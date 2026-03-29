@@ -13,7 +13,9 @@ import streamlit as st
 from data_logic import (
     AXES_LABELS, score_all_top_companies, get_company_profile,
     score_company, get_supply_chain_network, autocomplete_recipient,
+    apply_vital_pulse_modifier,
 )
+from vital_pulse import run_vital_pulse
 from entity_resolver import assign_company_ids
 from graph_analysis import (
     build_supply_chain_graph, calculate_network_metrics,
@@ -826,6 +828,69 @@ Domain guess: {domain}
                     data["total"] = four_axes + cyber_score
                     st.success(f"Rescanned {override_domain}. Digital Resilience: {cyber_score}/200. New total: {data['total']}/1000")
                     st.rerun()
+
+            # VP-1000: Vital Signs
+            st.markdown("<div class='section-title'>VP-1000: VITAL SIGNS</div>", unsafe_allow_html=True)
+            domain = data.get("domain")
+            if domain:
+                with st.spinner(f"Checking vital signs for {domain}..."):
+                    vital = run_vital_pulse(domain)
+                    data = apply_vital_pulse_modifier(data, vital)
+
+                # Vital score display
+                vs = vital["vital_score"]
+                if vs >= 80:
+                    vs_color, vs_label = "#10b981", "HEALTHY"
+                elif vs >= 50:
+                    vs_color, vs_label = "#2E7BE6", "STABLE"
+                elif vs >= 30:
+                    vs_color, vs_label = "#f59e0b", "WARNING"
+                else:
+                    vs_color, vs_label = "#ef4444", "CRITICAL"
+
+                vp1, vp2 = st.columns([1, 2])
+                with vp1:
+                    st.markdown(f"""
+                    <div style="text-align:center; padding:20px; background:linear-gradient(135deg, #f8fafc, #e2e8f0); border-radius:16px;">
+                        <div style="font-size:0.8em; color:#64748b; font-weight:700; letter-spacing:1px;">VITAL PULSE</div>
+                        <div style="font-size:2.5em; font-weight:900; color:{vs_color};">{vs}</div>
+                        <div style="font-size:0.9em; font-weight:700; color:{vs_color};">{vs_label}</div>
+                        <div style="font-size:0.75em; color:#94a3b8; margin-top:4px;">Score modifier: x{data.get('vital_modifier', 1.0):.1f}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with vp2:
+                    # Signal list
+                    for signal_name, signal_type in vital["signals"]:
+                        if signal_type == "positive":
+                            icon, color = "&#9679;", "#10b981"  # green dot
+                        elif signal_type == "negative":
+                            icon, color = "&#9679;", "#ef4444"  # red dot
+                        else:
+                            icon, color = "&#9679;", "#94a3b8"  # gray dot
+                        st.markdown(
+                            f'<div style="display:flex; align-items:center; padding:6px 0;">'
+                            f'<span style="color:{color}; font-size:1.2em; margin-right:10px;">{icon}</span>'
+                            f'<span style="font-size:0.95em; color:#1e293b;">{signal_name}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    # Detail metrics
+                    alive = vital["alive"]
+                    careers = vital["careers"]
+                    if alive["alive"]:
+                        st.caption(f"Response time: {alive['response_time_ms']:.0f}ms")
+                    if careers["has_careers"]:
+                        st.caption(f"Careers page: {careers['careers_url']}")
+            else:
+                st.markdown(
+                    '<div style="padding:20px; background:#fef2f2; border-radius:10px; border:1px solid #fecaca;">'
+                    '<span style="color:#ef4444; font-weight:700;">No domain available.</span> '
+                    'Use "Claim this business" above to add a domain and run vital checks.'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
 
             # Key metrics
             st.markdown("<div class='section-title'>KEY METRICS</div>", unsafe_allow_html=True)

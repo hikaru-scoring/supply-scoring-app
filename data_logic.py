@@ -765,6 +765,46 @@ def score_company(profile: dict, all_profiles: list[dict]) -> dict:
 # Score all top companies (main entry for dashboard)
 # ---------------------------------------------------------------------------
 
+def apply_vital_pulse_modifier(scored_data, vital_result):
+    """Apply VP-1000 vital pulse as a score modifier.
+    vital_score 80-100: boost 1.1x (capped at 1000)
+    vital_score 50-79: no change (1.0x)
+    vital_score 30-49: penalty 0.9x
+    vital_score 0-29: penalty 0.8x
+
+    Also: if careers page found, add +10 to Contract Volume (hiring signal)
+    """
+    if not vital_result:
+        return scored_data
+
+    vs = vital_result["vital_score"]
+
+    if vs >= 80:
+        modifier = 1.1
+    elif vs >= 50:
+        modifier = 1.0
+    elif vs >= 30:
+        modifier = 0.9
+    else:
+        modifier = 0.8
+
+    # Apply modifier to total (cap at 1000)
+    new_total = min(int(scored_data["total"] * modifier), 1000)
+
+    # Hiring bonus to Contract Volume
+    if vital_result.get("careers", {}).get("has_careers"):
+        scored_data["axes"]["Contract Volume"] = min(
+            scored_data["axes"]["Contract Volume"] + 10, 200
+        )
+        new_total = min(new_total + 10, 1000)
+
+    scored_data["total"] = new_total
+    scored_data["vital_pulse"] = vital_result
+    scored_data["vital_modifier"] = modifier
+
+    return scored_data
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def score_all_top_companies(year=2024, limit=50) -> list[dict]:
     """Fetch top recipients, build profiles, score them all.
