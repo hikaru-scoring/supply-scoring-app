@@ -1,8 +1,10 @@
 # app.py
 """SUPPLY-1000 -- US Government Supply Chain Scoring Platform."""
 import json
+import math
 import os
 
+import networkx as nx
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -11,6 +13,11 @@ import streamlit as st
 from data_logic import (
     AXES_LABELS, score_all_top_companies, get_company_profile,
     score_company, get_supply_chain_network, autocomplete_recipient,
+)
+from entity_resolver import assign_company_ids
+from graph_analysis import (
+    build_supply_chain_graph, calculate_network_metrics,
+    simulate_risk_propagation, get_company_ego_network, get_critical_path,
 )
 from ui_components import inject_css, render_radar_chart
 
@@ -113,6 +120,229 @@ def _score_color(total: int) -> str:
     if total >= 400:
         return "#f59e0b"
     return "#ef4444"
+
+
+# ---------------------------------------------------------------------------
+# Sample network data loader
+# ---------------------------------------------------------------------------
+SAMPLE_DATA_FILE = os.path.join(os.path.dirname(__file__), "dod_sample_data.json")
+
+
+@st.cache_data(ttl=86400)
+def load_sample_network():
+    """Load dod_sample_data.json, resolve entities, build graph."""
+    if not os.path.exists(SAMPLE_DATA_FILE):
+        return None, {}, []
+    try:
+        with open(SAMPLE_DATA_FILE, "r") as f:
+            data = json.load(f)
+        records = data.get("records", [])
+        if not records:
+            return None, {}, []
+        # Entity resolution
+        resolved = assign_company_ids(records)
+        # Build graph
+        G = build_supply_chain_graph(resolved)
+        # Calculate metrics
+        metrics = calculate_network_metrics(G)
+        return G, metrics, resolved
+    except Exception:
+        return None, {}, []
+
+
+def _render_plotly_network(G, title_label="Supply Chain Network", top_n=50):
+    """Render a Plotly network graph from a NetworkX DiGraph.
+
+    Node size = total contract value (scaled).
+    Node color = pagerank score (green=high, red=low).
+    Shows top_n companies by total value to avoid cluttering.
+    """
+    if G is None or len(G.nodes) == 0:
+        st.info("No network data available.")
+        return
+
+    # Pick top N nodes by total value (received + awarded)
+    node_values = {}
+    for node in G.nodes:
+        received = G.nodes[node].get("total_received", 0)
+        awarded = G.nodes[node].get("total_awarded", 0)
+        node_values[node] = received + awarded
+
+    sorted_nodes = sorted(node_values.keys(), key=lambda n: node_values[n], reverse=True)
+    top_nodes = set(sorted_nodes[:top_n])
+
+    # Build subgraph
+    subG = G.subgraph(top_nodes).copy()
+    if len(subG.nodes) == 0:
+        st.info("No network data available.")
+        return
+
+    # Layout: spring layout
+    try:
+        pos = nx.spring_layout(subG, k=2.0 / math.sqrt(max(len(subG.nodes), 1)), iterations=50, seed=42)
+    except Exception:
+        pos = nx.circular_layout(subG)
+
+    node_list = list(subG.nodes)
+
+    # Compute pagerank for coloring
+    try:
+        pr = nx.pagerank(subG, weight="total_amount", max_iter=200)
+    except Exception:
+        pr = {n: 0.5 for n in node_list}
+
+    max_pr = max(pr.values()) if pr else 1
+    min_pr = min(pr.values()) if pr else 0
+    pr_range = max_pr - min_pr if max_pr != min_pr else 1
+
+    # Build edge traces
+    edge_x, edge_y = [], []
+    for u, v in subG.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y, mode="lines",
+        line=dict(width=0.8, color="#d1d5db"),
+        hoverinfo="none",
+    )
+
+    # Build node traces
+    node_x = [pos[n][0] for n in node_list]
+    node_y = [pos[n][1] for n in node_list]
+
+    max_val = max(node_values[n] for n in node_list) if node_list else 1
+    node_sizes = []
+    node_colors = []
+    hover_texts = []
+    display_names = []
+
+    for n in node_list:
+        val = node_values.get(n, 0)
+        # Scale size: min 8, max 40
+        size = 8 + 32 * (val / max_val) if max_val > 0 else 12
+        node_sizes.append(size)
+
+        # Color: green (high pagerank) to red (low pagerank)
+        normalized = (pr.get(n, 0) - min_pr) / pr_range
+        r_val = int(239 * (1 - normalized) + 16 * normalized)
+        g_val = int(68 * (1 - normalized) + 185 * normalized)
+        b_val = int(68 * (1 - normalized) + 129 * normalized)
+        node_colors.append(f"rgb({r_val},{g_val},{b_val})")
+
+        hover_texts.append(
+            f"{n}<br>Total Value: {_fmt_dollar(val)}<br>"
+            f"PageRank: {pr.get(n, 0):.4f}<br>"
+            f"In-degree: {subG.in_degree(n)}, Out-degree: {subG.out_degree(n)}"
+        )
+        short = n[:25] + "..." if len(n) > 25 else n
+        display_names.append(short)
+
+    node_trace = go.Scatter(
+        x=node_x, y=node_y, mode="markers+text",
+        marker=dict(size=node_sizes, color=node_colors, line=dict(width=1, color="white")),
+        text=display_names,
+        textposition="top center",
+        textfont=dict(size=8),
+        hovertext=hover_texts,
+        hoverinfo="text",
+    )
+
+    fig = go.Figure(data=[edge_trace, node_trace])
+    fig.update_layout(
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=550,
+        plot_bgcolor="white",
+        clickmode="none", dragmode=False,
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def _render_ego_network(G, company, radius=2):
+    """Render the ego network for a specific company."""
+    if G is None or company not in G:
+        st.info("This company is not in the sample network data.")
+        return
+
+    ego = get_company_ego_network(G, company, radius=radius)
+    if len(ego.nodes) == 0:
+        st.info("No network connections found for this company.")
+        return
+
+    try:
+        pos = nx.spring_layout(ego, k=2.0 / math.sqrt(max(len(ego.nodes), 1)), iterations=50, seed=42)
+    except Exception:
+        pos = nx.circular_layout(ego)
+
+    node_list = list(ego.nodes)
+
+    # Edge traces
+    edge_x, edge_y = [], []
+    for u, v in ego.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y, mode="lines",
+        line=dict(width=1.2, color="#94a3b8"),
+        hoverinfo="none",
+    )
+
+    # Node traces
+    node_x = [pos[n][0] for n in node_list]
+    node_y = [pos[n][1] for n in node_list]
+    node_colors = []
+    node_sizes = []
+    hover_texts = []
+    display_names = []
+
+    for n in node_list:
+        if n == company:
+            node_colors.append("#2E7BE6")
+            node_sizes.append(28)
+        elif ego.nodes[n].get("is_prime", False):
+            node_colors.append("#64748b")
+            node_sizes.append(18)
+        else:
+            node_colors.append("#94a3b8")
+            node_sizes.append(12)
+
+        received = ego.nodes[n].get("total_received", 0)
+        awarded = ego.nodes[n].get("total_awarded", 0)
+        hover_texts.append(
+            f"{n}<br>Received: {_fmt_dollar(received)}<br>Awarded: {_fmt_dollar(awarded)}"
+        )
+        short = n[:25] + "..." if len(n) > 25 else n
+        display_names.append(short)
+
+    node_trace = go.Scatter(
+        x=node_x, y=node_y, mode="markers+text",
+        marker=dict(size=node_sizes, color=node_colors, line=dict(width=1, color="white")),
+        text=display_names,
+        textposition="top center",
+        textfont=dict(size=9),
+        hovertext=hover_texts,
+        hoverinfo="text",
+    )
+
+    fig = go.Figure(data=[edge_trace, node_trace])
+    fig.update_layout(
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=450,
+        plot_bgcolor="white",
+        clickmode="none", dragmode=False,
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +624,19 @@ def main():
         )
         st.plotly_chart(fig_dist, use_container_width=True, config={"displayModeBar": False})
 
+        # Supply Chain Network from sample data
+        st.markdown("<div class='section-title'>SUPPLY CHAIN NETWORK (DoD Sample Data)</div>", unsafe_allow_html=True)
+        sample_G, sample_metrics, _ = load_sample_network()
+        if sample_G is not None and len(sample_G.nodes) > 0:
+            st.caption(
+                f"Showing top 50 companies by contract value from {len(sample_G.nodes)} total companies "
+                f"and {len(sample_G.edges)} connections. "
+                f"Node size = total contract value. Color = PageRank (green = high importance, red = low)."
+            )
+            _render_plotly_network(sample_G, top_n=50)
+        else:
+            st.info("Sample network data not available. Place dod_sample_data.json in the app directory.")
+
     # ===================================================================
     # COMPANY DETAIL TAB
     # ===================================================================
@@ -570,6 +813,79 @@ def main():
                             f"- {sg['sub_name']}: {_fmt_dollar(sg['amount'])}"
                         )
 
+            # --- Sample network: Ego Network + Risk Propagation ---
+            sample_G, sample_metrics, _ = load_sample_network()
+
+            # Find matching node in graph (fuzzy match on name)
+            graph_node = None
+            if sample_G is not None:
+                name_upper = data["name"].upper()
+                for node in sample_G.nodes:
+                    if name_upper in node.upper() or node.upper() in name_upper:
+                        graph_node = node
+                        break
+
+            if graph_node is not None:
+                # Ego network visualization
+                st.markdown("<div class='section-title'>SUPPLY CHAIN MAP (Sample Network)</div>", unsafe_allow_html=True)
+                st.caption(
+                    f"Local network around {graph_node} (2 hops). "
+                    f"Blue = target company, dark gray = prime contractors, light gray = sub-contractors."
+                )
+                _render_ego_network(sample_G, graph_node, radius=2)
+
+                # Risk propagation
+                st.markdown("<div class='section-title'>RISK PROPAGATION</div>", unsafe_allow_html=True)
+                st.caption(f"What happens if {graph_node} fails? Simulated impact on connected companies.")
+
+                risk = simulate_risk_propagation(sample_G, graph_node, decay_factor=0.7)
+                if risk:
+                    # Sort by impact descending
+                    sorted_risk = sorted(risk.items(), key=lambda x: x[1], reverse=True)
+                    for company_name, impact in sorted_risk[:15]:
+                        # Determine relationship
+                        if sample_G.has_edge(graph_node, company_name):
+                            rel = "Direct sub-contractor"
+                        elif sample_G.has_edge(company_name, graph_node):
+                            rel = "Prime contractor (upstream)"
+                        else:
+                            rel = "Indirect connection"
+
+                        if impact >= 50:
+                            impact_color = "#ef4444"
+                        elif impact >= 20:
+                            impact_color = "#f59e0b"
+                        else:
+                            impact_color = "#94a3b8"
+
+                        short_name = company_name[:40] + "..." if len(company_name) > 40 else company_name
+                        st.markdown(
+                            f"<div class='dna-card'>"
+                            f"<div>"
+                            f"<span class='dna-label'>{short_name}</span>"
+                            f"<span style='font-size:11px; color:#64748b; margin-left:10px;'>{rel}</span>"
+                            f"</div>"
+                            f"<div class='dna-value' style='color:{impact_color};'>{impact:.0f}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.info("No significant downstream risk detected for this company.")
+
+                # Network metrics for this company
+                if graph_node in sample_metrics:
+                    m = sample_metrics[graph_node]
+                    st.markdown("<div class='section-title'>NETWORK METRICS</div>", unsafe_allow_html=True)
+                    mc1, mc2, mc3, mc4 = st.columns(4)
+                    with mc1:
+                        st.metric("PageRank", f"{m['pagerank']:.4f}")
+                    with mc2:
+                        st.metric("Betweenness", f"{m['betweenness_centrality']:.4f}")
+                    with mc3:
+                        st.metric("Hub Score", f"{m['hub_score']:.4f}")
+                    with mc4:
+                        st.metric("Authority Score", f"{m['authority_score']:.4f}")
+
             # CSV download
             st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
             csv_data = generate_csv(data)
@@ -597,6 +913,10 @@ def main():
             with st.spinner("Loading rankings..."):
                 all_scores_for_select = score_all_top_companies(year=2024, limit=50)
 
+        # Toggle for network metrics
+        show_net_metrics = st.checkbox("Show network metrics (PageRank, Betweenness)", value=False)
+        sample_G_rank, sample_metrics_rank, _ = load_sample_network() if show_net_metrics else (None, {}, [])
+
         if all_scores_for_select:
             for i, s in enumerate(all_scores_for_select):
                 rank = i + 1
@@ -617,6 +937,28 @@ def main():
                         f"</div>"
                     )
 
+                # Network metrics row (optional)
+                net_metrics_html = ""
+                if show_net_metrics and sample_metrics_rank:
+                    # Find matching node
+                    name_upper = s["name"].upper()
+                    matched_node = None
+                    for node in sample_metrics_rank:
+                        if name_upper in node.upper() or node.upper() in name_upper:
+                            matched_node = node
+                            break
+                    if matched_node:
+                        m = sample_metrics_rank[matched_node]
+                        net_metrics_html = (
+                            f"<div style='display:flex; gap:20px; font-size:11px; color:#2E7BE6; margin-top:6px; padding-top:6px; border-top:1px solid #f1f5f9;'>"
+                            f"<span>PageRank: {m['pagerank']:.4f}</span>"
+                            f"<span>Betweenness: {m['betweenness_centrality']:.4f}</span>"
+                            f"<span>Hub: {m['hub_score']:.4f}</span>"
+                            f"<span>Authority: {m['authority_score']:.4f}</span>"
+                            f"<span>In: {m['in_degree']} / Out: {m['out_degree']}</span>"
+                            f"</div>"
+                        )
+
                 st.markdown(
                     f"<div class='card' style='margin-bottom:12px; padding:18px 24px;'>"
                     f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'>"
@@ -633,6 +975,7 @@ def main():
                     f"<span>YoY: {s.get('yoy_change', 0):+.0%}</span>"
                     f"</div>"
                     f"{axis_bars}"
+                    f"{net_metrics_html}"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
