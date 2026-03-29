@@ -796,6 +796,37 @@ To get a real score, view the company in Company Detail (triggers live scan).
 Domain guess: {domain}
                                 """)
 
+            # Claim this business (domain override)
+            domain = data.get("domain")
+            st.markdown("")
+            with st.expander("Wrong domain? Claim this business"):
+                st.markdown("If the auto-detected domain is incorrect or missing, enter the correct domain below to rescan.")
+                col_domain, col_scan = st.columns([3, 1])
+                with col_domain:
+                    override_domain = st.text_input(
+                        "Company domain",
+                        value=domain or "",
+                        placeholder="e.g. lockheedmartin.com",
+                        key="domain_override",
+                        label_visibility="collapsed",
+                    )
+                with col_scan:
+                    rescan = st.button("Rescan")
+                if rescan and override_domain:
+                    with st.spinner(f"Scanning {override_domain}..."):
+                        from data_logic import _scan_domain_quick
+                        cyber_score, cyber_detail = _scan_domain_quick(override_domain)
+                    data["domain"] = override_domain
+                    data["digital_score_detail"] = cyber_detail
+                    four_axes = sum(
+                        data["axes"][k] for k in ["Contract Volume", "Diversification",
+                                                   "Contract Continuity", "Network Position"]
+                    )
+                    data["axes"]["Digital Resilience"] = cyber_score
+                    data["total"] = four_axes + cyber_score
+                    st.success(f"Rescanned {override_domain}. Digital Resilience: {cyber_score}/200. New total: {data['total']}/1000")
+                    st.rerun()
+
             # Key metrics
             st.markdown("<div class='section-title'>KEY METRICS</div>", unsafe_allow_html=True)
             m1, m2, m3, m4 = st.columns(4)
