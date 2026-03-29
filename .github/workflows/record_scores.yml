@@ -1,0 +1,31 @@
+name: Record Daily Supply Chain Scores
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # UTC 02:00 daily
+  workflow_dispatch:
+
+jobs:
+  record-scores:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Record scores
+        run: python record_scores.py
+        timeout-minutes: 15
+
+      - name: Commit and push
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add scores_history.json
+          git diff --staged --quiet || git commit -m "Daily score update: $(date +%Y-%m-%d)"
+          git push
