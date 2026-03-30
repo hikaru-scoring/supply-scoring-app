@@ -23,7 +23,7 @@ from graph_analysis import (
     simulate_risk_propagation, get_company_ego_network, get_critical_path,
 )
 from ui_components import inject_css, render_radar_chart
-from pdf_report import generate_supply_pdf
+# pdf_report imported lazily when PDF download is triggered
 
 APP_TITLE = "SUPPLY-1000 -- Supply Chain Scoring"
 st.set_page_config(page_title=APP_TITLE, page_icon="\u26d3\ufe0f", layout="wide")
@@ -1089,6 +1089,7 @@ Domain guess: {domain}
             st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
             dl_col1, dl_col2 = st.columns(2)
             with dl_col1:
+                from pdf_report import generate_supply_pdf
                 pdf_bytes = generate_supply_pdf(data)
                 st.download_button(
                     label="Download PDF Report",
