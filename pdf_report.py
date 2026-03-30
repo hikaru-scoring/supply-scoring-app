@@ -181,12 +181,13 @@ def _build_styles():
     return styles
 
 
-def generate_supply_pdf(scored_data: dict, company_name: str = "") -> bytes:
+def generate_supply_pdf(scored_data: dict, company_name: str = "", all_scores: list = None) -> bytes:
     """Generate a professional PDF report for a scored company.
 
     Args:
         scored_data: The full scored data dict from score_company + adjustments.
         company_name: Optional company name override for white-labeling.
+        all_scores: Optional list of all scored companies (for industry average).
 
     Returns:
         PDF as bytes (for st.download_button).
@@ -244,6 +245,24 @@ def generate_supply_pdf(scored_data: dict, company_name: str = "") -> bytes:
         f"<font size='9' color='#94a3b8'>/ 1000</font>",
         styles["ReportBody"],
     ))
+
+    # Industry average and rank (if all_scores provided)
+    if all_scores:
+        avg = int(sum(s.get("total", 0) for s in all_scores) / len(all_scores))
+        rank = 1
+        for s in all_scores:
+            if s.get("total", 0) > total:
+                rank += 1
+        diff = total - avg
+        diff_sign = "+" if diff >= 0 else ""
+        elements.append(Paragraph(
+            f"<font size='9' color='#64748b'>"
+            f"Industry Average: <b>{avg}</b> / 1000 &nbsp;&nbsp; "
+            f"Rank: <b>#{rank}</b> of {len(all_scores)} &nbsp;&nbsp; "
+            f"vs Average: <b>{diff_sign}{diff}</b>"
+            f"</font>",
+            styles["ReportBody"],
+        ))
     elements.append(Spacer(1, 3 * mm))
 
     risk_style = ParagraphStyle(

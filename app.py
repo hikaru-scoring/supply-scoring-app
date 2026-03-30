@@ -1090,7 +1090,7 @@ Domain guess: {domain}
             dl_col1, dl_col2 = st.columns(2)
             with dl_col1:
                 from pdf_report import generate_supply_pdf
-                pdf_bytes = generate_supply_pdf(data)
+                pdf_bytes = generate_supply_pdf(data, all_scores=all_scores_for_select)
                 st.download_button(
                     label="Download PDF Report",
                     data=pdf_bytes,
