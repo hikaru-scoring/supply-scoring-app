@@ -4,3 +4,5 @@ numpy
 plotly
 requests
 networkx
+fpdf2
+kaleido
