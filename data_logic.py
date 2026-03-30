@@ -168,6 +168,52 @@ def autocomplete_recipient(search_text: str, limit: int = 10):
 
 
 # ---------------------------------------------------------------------------
+# Enrich profile with location data
+# ---------------------------------------------------------------------------
+
+def _enrich_profile_location(profile):
+    """Try to fetch state_code and naics_code from USAspending recipient search.
+    Uses the spending_by_award endpoint with location fields.
+    """
+    name = profile.get("name", "")
+    if not name:
+        return
+    payload = {
+        "filters": {
+            "award_type_codes": ["A", "B", "C", "D"],
+            "time_period": [
+                {"start_date": "2024-01-01", "end_date": "2024-12-31"}
+            ],
+            "recipient_search_text": [name],
+        },
+        "fields": [
+            "Recipient Name", "recipient_state_code",
+            "naics_code", "Award Amount",
+        ],
+        "limit": 5,
+        "page": 1,
+        "subawards": False,
+        "order": "desc",
+        "sort": "Award Amount",
+    }
+    data = _safe_post(f"{BASE_URL}/search/spending_by_award/", payload)
+    if not data:
+        return
+    results = data.get("results", [])
+    for r in results:
+        rname = (r.get("Recipient Name") or "").upper()
+        if name.upper()[:15] in rname or rname[:15] in name.upper():
+            state = r.get("recipient_state_code")
+            naics = r.get("naics_code")
+            if state and not profile.get("state_code"):
+                profile["state_code"] = state
+            if naics and not profile.get("naics_code"):
+                profile["naics_code"] = naics
+            if profile.get("state_code") and profile.get("naics_code"):
+                break
+
+
+# ---------------------------------------------------------------------------
 # Build company profile
 # ---------------------------------------------------------------------------
 
@@ -259,6 +305,14 @@ def get_company_profile(company_name: str) -> dict:
     profile["sub_contractors"] = list(profile["sub_contractors"])
     profile["years_active"] = sorted(list(profile["years_active"]))
     profile["domain"] = _guess_domain(profile["name"])
+    profile["state_code"] = None  # Will be populated from USAspending location data
+    profile["naics_code"] = None  # Will be populated from contract NAICS codes
+
+    # Try to extract state from USAspending recipient location
+    try:
+        _enrich_profile_location(profile)
+    except Exception:
+        pass
 
     return profile
 
@@ -297,6 +351,8 @@ def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
             "contract_count": 0,
             "sub_count": 0,
             "years_active": [year],
+            "state_code": None,
+            "naics_code": None,
         }
 
         # Quick prime award lookup for agency info and contract count
@@ -758,12 +814,29 @@ def score_company(profile: dict, all_profiles: list[dict]) -> dict:
         "yoy_change": yoy_change,
         "domain": domain,
         "digital_score_detail": digital_score_detail,
+        "state_code": profile.get("state_code"),
+        "naics_code": profile.get("naics_code"),
+        "prime_contractors": profile.get("prime_contractors", []),
     }
 
 
 # ---------------------------------------------------------------------------
 # Score all top companies (main entry for dashboard)
 # ---------------------------------------------------------------------------
+
+def apply_environment_adjustment(scored_data, env_result):
+    """Apply Layer 1 environment adjustments to scored data.
+    Adjusts total score based on GOV, REALESTATE, PORT, FRS scores.
+    """
+    if not env_result:
+        return scored_data
+
+    adj = env_result["total_adjustment"]
+    scored_data["total"] = _clamp(scored_data["total"] + adj, 0, 1000)
+    scored_data["environment"] = env_result
+
+    return scored_data
+
 
 def apply_vital_pulse_modifier(scored_data, vital_result):
     """Apply VP-1000 vital pulse as a score modifier.

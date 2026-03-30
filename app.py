@@ -13,8 +13,9 @@ import streamlit as st
 from data_logic import (
     AXES_LABELS, score_all_top_companies, get_company_profile,
     score_company, get_supply_chain_network, autocomplete_recipient,
-    apply_vital_pulse_modifier,
+    apply_vital_pulse_modifier, apply_environment_adjustment,
 )
+from environment_scores import calculate_environment_adjustment
 from vital_pulse import run_vital_pulse
 from entity_resolver import assign_company_ids
 from graph_analysis import (
@@ -891,6 +892,66 @@ Domain guess: {domain}
                     '</div>',
                     unsafe_allow_html=True,
                 )
+
+            # Layer 1: Environment Score
+            st.markdown("<div class='section-title'>ENVIRONMENT SCORE</div>", unsafe_allow_html=True)
+
+            # Get state from USAspending data (company profile should have state)
+            state_code = data.get("state_code")
+            naics_code = data.get("naics_code")
+            prime_name = data.get("prime_contractors", [None])[0] if data.get("prime_contractors") else None
+
+            env = calculate_environment_adjustment(state_code, naics_code, prime_name)
+            data = apply_environment_adjustment(data, env)
+
+            # Display as cards
+            env_cols = st.columns(4)
+            adjustments = [
+                ("GOV-1000", "State Fiscal", env["gov_adjustment"]),
+                ("REALESTATE-1000", "Real Estate", env["realestate_adjustment"]),
+                ("PORT-1000", "Port Risk", env["port_adjustment"]),
+                ("FRS-1000", "Prime Health", env["frs_adjustment"]),
+            ]
+
+            for col, (source, label, adj) in zip(env_cols, adjustments):
+                if adj > 0:
+                    color = "#10b981"
+                    prefix = "+"
+                elif adj < 0:
+                    color = "#ef4444"
+                    prefix = ""
+                else:
+                    color = "#94a3b8"
+                    prefix = ""
+
+                col.markdown(f"""
+                <div style="background:#f8fafc; border-radius:10px; padding:14px; text-align:center; border:1px solid #e2e8f0;">
+                    <div style="font-size:0.7em; color:#64748b; font-weight:600;">{source}</div>
+                    <div style="font-size:0.85em; color:#333; font-weight:600;">{label}</div>
+                    <div style="font-size:1.8em; font-weight:900; color:{color};">{prefix}{adj}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Total environment adjustment
+            total_adj = env["total_adjustment"]
+            if total_adj > 0:
+                adj_color = "#10b981"
+            elif total_adj < 0:
+                adj_color = "#ef4444"
+            else:
+                adj_color = "#94a3b8"
+
+            st.markdown(f"""
+            <div style="text-align:center; margin:10px 0;">
+                <span style="font-size:0.9em; color:#64748b;">Total Environment Adjustment: </span>
+                <span style="font-size:1.2em; font-weight:900; color:{adj_color};">{'+' if total_adj >= 0 else ''}{total_adj} points</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if state_code:
+                st.caption(f"State: {state_code} | NAICS: {naics_code or 'N/A'} | Prime: {prime_name or 'N/A'}")
+            else:
+                st.caption("State data not available from USAspending. Environment adjustments default to 0.")
 
             # Key metrics
             st.markdown("<div class='section-title'>KEY METRICS</div>", unsafe_allow_html=True)
