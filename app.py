@@ -23,6 +23,7 @@ from graph_analysis import (
     simulate_risk_propagation, get_company_ego_network, get_critical_path,
 )
 from ui_components import inject_css, render_radar_chart
+from pdf_report import generate_supply_pdf
 
 APP_TITLE = "SUPPLY-1000 -- Supply Chain Scoring"
 st.set_page_config(page_title=APP_TITLE, page_icon="\u26d3\ufe0f", layout="wide")
@@ -1084,15 +1085,25 @@ Domain guess: {domain}
                     with mc4:
                         st.metric("Authority Score", f"{m['authority_score']:.4f}")
 
-            # CSV download
+            # Export downloads
             st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
-            csv_data = generate_csv(data)
-            st.download_button(
-                label="Download CSV Report",
-                data=csv_data,
-                file_name=f"supply1000_{data['name'].replace(' ', '_')}.csv",
-                mime="text/csv",
-            )
+            dl_col1, dl_col2 = st.columns(2)
+            with dl_col1:
+                pdf_bytes = generate_supply_pdf(data)
+                st.download_button(
+                    label="Download PDF Report",
+                    data=pdf_bytes,
+                    file_name=f"SMB1000_{data['name'].replace(' ', '_')}.pdf",
+                    mime="application/pdf",
+                )
+            with dl_col2:
+                csv_data = generate_csv(data)
+                st.download_button(
+                    label="Download CSV Report",
+                    data=csv_data,
+                    file_name=f"supply1000_{data['name'].replace(' ', '_')}.csv",
+                    mime="text/csv",
+                )
 
     # ===================================================================
     # RANKINGS TAB
