@@ -534,6 +534,16 @@ def main():
         all_scores = []
         with st.spinner("Loading supply chain data from USAspending.gov..."):
             all_scores = score_all_top_companies(year=2024, limit=50)
+            # Apply environment adjustments to all companies
+            for s in all_scores:
+                env = calculate_environment_adjustment(
+                    s.get("state_code"),
+                    s.get("naics_code"),
+                    s.get("prime_contractors", [None])[0] if s.get("prime_contractors") else None,
+                )
+                s = apply_environment_adjustment(s, env)
+            # Re-sort after adjustment
+            all_scores.sort(key=lambda x: x["total"], reverse=True)
 
         if not all_scores:
             st.error("Could not load data from USAspending.gov. Please try again later.")
