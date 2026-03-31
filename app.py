@@ -354,11 +354,11 @@ def _render_ego_network(G, company, radius=2):
 # ---------------------------------------------------------------------------
 
 LOGIC_DESC = {
-    "Contract Volume": "Total government contract value and count, with growth bonus. YoY growth adds up to +40 or penalizes -20.",
-    "Diversification": "Number of agencies and prime contractors. Concentration penalty if over-reliant on one source.",
-    "Contract Continuity": "Years of continuous government contracting. Consecutive years earn bonus.",
-    "Network Position": "Prime vs sub-contractor status, network hub importance.",
-    "Digital Resilience": "SSL certificate health and email security (SPF/DMARC). Powered by CYBER-1000 engine.",
+    "Contract Volume": "Contract value + count + YoY growth bonus",
+    "Diversification": "Agency diversity + client concentration",
+    "Contract Continuity": "Years active + consecutive year bonus",
+    "Network Position": "Prime/sub status + hub importance",
+    "Digital Resilience": "SSL health + email security (CYBER-1000)",
 }
 
 
