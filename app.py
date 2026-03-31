@@ -735,64 +735,114 @@ def main():
                     profile["_run_cyber_scan"] = True
                     data = score_company(profile, [profile])
 
-            # Save/Clear buttons
-            col_save, col_clear = st.columns([1, 1])
-            with col_save:
-                if st.button("Save for comparison"):
-                    st.session_state.saved_company_data = data
-            with col_clear:
-                if st.button("Clear comparison"):
-                    st.session_state.saved_company_data = None
+            # Save/Clear + PDF/CSV buttons
+            col_btn1, col_btn2, col_btn3, col_btn4, col_btn_rest = st.columns([1, 1, 1.5, 1.5, 5.5])
 
-            # Total score centered
-            st.markdown(
-                f"<div class='total-score-container'>"
-                f"<div class='total-score-label'>SUPPLY CHAIN HEALTH SCORE</div>"
-                f"<div class='total-score-val'>{data['total']}</div>"
-                f"<div style='font-size:16px; color:#94a3b8; font-weight:600;'>/ 1000</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+            with col_btn1:
+                save_it = st.button("Save")
+            with col_btn2:
+                clear_it = st.button("Clear")
+            with col_btn3:
+                from pdf_report import generate_supply_pdf
+                pdf_bytes = generate_supply_pdf(data, all_scores=all_scores_for_select)
+                st.download_button("PDF", pdf_bytes, file_name=f"SUPPLY1000_{data['name'].replace(' ', '_')}.pdf", mime="application/pdf")
+            with col_btn4:
+                csv_data = generate_csv(data)
+                st.download_button("CSV", csv_data, file_name=f"SUPPLY1000_{data['name'].replace(' ', '_')}.csv", mime="text/csv")
 
-            render_score_delta(data["name"], data["total"])
+            if save_it:
+                st.session_state.saved_company_data = data
+                st.rerun()
+            if clear_it:
+                st.session_state.saved_company_data = None
+                st.rerun()
 
-            # Radar + Score cards
-            col_radar, col_cards = st.columns([1, 1])
+            # Total score centered (FRS-1000 pattern)
+            display_total = int(data.get("total", 0))
+            st.markdown(f"""
+            <div style="text-align:center; margin-top:4px; margin-bottom:10px;">
+                <div style="font-size:14px; letter-spacing:2px; color:#666;">TOTAL SCORE</div>
+                <div style="font-size:90px; font-weight:800; color:#2E7BE6; line-height:1;">
+                    {display_total}
+                    <span style="font-size:35px; color:#BBB;">/ 1000</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            with col_radar:
+            render_score_delta(data["name"], display_total)
+
+            # Radar (left) + Score cards (right)
+            col_left, col_right = st.columns([1.5, 1])
+
+            with col_left:
+                st.markdown("<div style='font-size: 1.1em; font-weight: bold; color: #333; margin-top: -10px; margin-bottom: 5px;'>I. Intelligence Radar</div>", unsafe_allow_html=True)
                 fig = render_radar_chart(
                     data, st.session_state.saved_company_data, AXES_LABELS
                 )
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-            with col_cards:
+            with col_right:
+                st.markdown(
+                    "<div style='font-size: 0.9em; font-weight: bold; color: #333; margin-top: -10px; margin-bottom: 15px; border-left: 3px solid #2E7BE6; padding-left: 8px;'>II. ANALYSIS SCORE METRICS</div>",
+                    unsafe_allow_html=True,
+                )
+
                 for axis in AXES_LABELS:
-                    score_val = data["axes"].get(axis, 0)
+                    v1 = int(data["axes"].get(axis, 0))
+                    v2 = int(st.session_state.saved_company_data["axes"].get(axis, 0)) if st.session_state.saved_company_data else None
+
+                    desc_text = LOGIC_DESC.get(axis, "")
+
+                    score_html = f'<span style="color: #2E7BE6;">{v1}</span><span style="color:#bbb;font-size:0.5em;font-weight:600;"> /200</span>'
+                    if v2 is not None:
+                        score_html += f' <span style="color: #ccc; font-size: 0.9em; font-weight:bold; margin: 0 6px;">vs</span> <span style="color: #F4A261;">{v2}</span><span style="color:#bbb;font-size:0.5em;font-weight:600;"> /200</span>'
+
                     st.markdown(
-                        f"<div class='dna-card'>"
-                        f"<div class='dna-label'>{axis}</div>"
-                        f"<div class='dna-value'>{score_val} <span style='font-size:12px; color:#94a3b8;'>/ 200</span></div>"
-                        f"</div>",
+                        f"""
+                        <div style="
+                            background-color: #FFFFFF;
+                            padding: 20px;
+                            border-radius: 12px;
+                            margin-bottom: 12px;
+                            border: 1px solid #E0E0E0;
+                            border-left: 8px solid #2E7BE6;
+                            box-shadow: 2px 2px 5px rgba(0,0,0,0.07);
+                        ">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <span style="font-size: 1.4em; font-weight: 800; color: #333333;">{axis}</span>
+                                <span style="font-size: 1.9em; font-weight: 900; line-height: 1;">{score_html}</span>
+                            </div>
+                            <p style="font-size: 1.05em; color: #777777; margin: 0; line-height: 1.3; font-weight: 500;">{desc_text}</p>
+                        </div>
+                        """,
                         unsafe_allow_html=True,
                     )
-                    with st.expander(f"Why {axis}?"):
-                        st.markdown(f"**Formula:** {LOGIC_DESC.get(axis, '')}")
+                    with st.expander(f"Why {v1}?", expanded=False):
                         if axis == "Contract Volume":
-                            st.markdown(f"- Total contract value: {_fmt_dollar(data.get('total_value', 0))}")
-                            st.markdown(f"- Prime value: {_fmt_dollar(data.get('total_prime_value', 0))}")
-                            st.markdown(f"- Sub value: {_fmt_dollar(data.get('total_sub_value', 0))}")
-                            st.markdown(f"- Contract count: {data.get('contract_count', 0)}")
-                            yoy = data.get("yoy_change", 0)
-                            st.markdown(f"- YoY growth (bonus): {yoy:+.1%}")
+                            st.markdown(f"""
+**Formula:** `(Total Value / $10B) x 100 + Count Bonus + YoY Growth Bonus`
+**Raw Data:** Value: {_fmt_dollar(data.get('total_value', 0))} | Prime: {_fmt_dollar(data.get('total_prime_value', 0))} | Sub: {_fmt_dollar(data.get('total_sub_value', 0))} | Count: {data.get('contract_count', 0)} | YoY: {data.get('yoy_change', 0):+.1%}
+**Source:** USAspending.gov
+                            """)
                         elif axis == "Diversification":
-                            st.markdown(f"- Agencies worked with: {data.get('agency_count', 0)}")
-                            st.markdown(f"- Prime contractors (as sub): {data.get('prime_contractor_count', 0)}")
+                            st.markdown(f"""
+**Formula:** `Agency Count x 20 + Prime Count x 15 - Concentration Penalty`
+**Raw Data:** Agencies: {data.get('agency_count', 0)} | Prime contractors (as sub): {data.get('prime_contractor_count', 0)}
+**Source:** USAspending.gov
+                            """)
                         elif axis == "Contract Continuity":
-                            st.markdown(f"- Years active: {data.get('years_active', 0)}")
+                            st.markdown(f"""
+**Formula:** `Years Active x 25 + Consecutive Year Bonus`
+**Raw Data:** Years active: {data.get('years_active', 0)}
+**Source:** USAspending.gov
+                            """)
                         elif axis == "Network Position":
-                            st.markdown(f"- Sub-contractors managed: {data.get('sub_contractor_count', 0)}")
                             has_prime = data.get("total_prime_value", 0) > 0
-                            st.markdown(f"- Is prime contractor: {'Yes' if has_prime else 'No'}")
+                            st.markdown(f"""
+**Formula:** `Prime Status (100) + Sub Count x 10 + Hub Bonus`
+**Raw Data:** Sub-contractors: {data.get('sub_contractor_count', 0)} | Is prime: {'Yes' if has_prime else 'No'}
+**Source:** USAspending.gov
+                            """)
                         elif axis == "Digital Resilience":
                             domain = data.get("domain", "N/A")
                             detail = data.get("digital_score_detail")
@@ -1085,26 +1135,7 @@ Domain guess: {domain}
                     with mc4:
                         st.metric("Authority Score", f"{m['authority_score']:.4f}")
 
-            # Export downloads
-            st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
-            dl_col1, dl_col2 = st.columns(2)
-            with dl_col1:
-                from pdf_report import generate_supply_pdf
-                pdf_bytes = generate_supply_pdf(data, all_scores=all_scores_for_select)
-                st.download_button(
-                    label="Download PDF Report",
-                    data=pdf_bytes,
-                    file_name=f"SMB1000_{data['name'].replace(' ', '_')}.pdf",
-                    mime="application/pdf",
-                )
-            with dl_col2:
-                csv_data = generate_csv(data)
-                st.download_button(
-                    label="Download CSV Report",
-                    data=csv_data,
-                    file_name=f"supply1000_{data['name'].replace(' ', '_')}.csv",
-                    mime="text/csv",
-                )
+            # (PDF/CSV download buttons are in the top button row)
 
     # ===================================================================
     # RANKINGS TAB
