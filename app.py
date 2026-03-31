@@ -498,12 +498,6 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-    # Logo
-    import os as _os
-    _logo_path = _os.path.join(_os.path.dirname(__file__), "logo.png")
-    if _os.path.exists(_logo_path):
-        st.image(_logo_path, width=180)
-
     # Session state
     if "saved_company_data" not in st.session_state:
         st.session_state.saved_company_data = None
@@ -1246,6 +1240,7 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
 """)
         else:
             st.warning("No scoring data available. Please try again later.")
+
 
 
 if __name__ == "__main__":
