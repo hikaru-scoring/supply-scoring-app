@@ -1041,14 +1041,14 @@ Domain guess: {domain}
             with col_primes:
                 prime_contracts = network.get("prime_contracts", [])
                 if prime_contracts:
-                    st.markdown("**Prime Contracts (from agencies):**")
+                    st.markdown("**Prime Contracts (from agencies, FY2024):**")
                     for pc in prime_contracts[:10]:
                         st.markdown(
                             f"- {pc['agency']}: {_fmt_dollar(pc['amount'])}"
                         )
                 sub_received = network.get("sub_contracts_received", [])
                 if sub_received:
-                    st.markdown("**Sub-contracts received (from primes):**")
+                    st.markdown("**Sub-contracts received (from primes, FY2024):**")
                     for sr in sub_received[:10]:
                         st.markdown(
                             f"- {sr['prime_name']}: {_fmt_dollar(sr['amount'])}"
@@ -1056,7 +1056,7 @@ Domain guess: {domain}
             with col_subs:
                 sub_given = network.get("sub_contracts_given", [])
                 if sub_given:
-                    st.markdown("**Sub-contracts given (to subs):**")
+                    st.markdown("**Sub-contracts given (to subs, FY2024):**")
                     for sg in sub_given[:10]:
                         st.markdown(
                             f"- {sg['sub_name']}: {_fmt_dollar(sg['amount'])}"
