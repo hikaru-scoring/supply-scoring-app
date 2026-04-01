@@ -188,6 +188,7 @@ def _enrich_profile_location(profile):
         },
         "fields": [
             "Recipient Name", "recipient_state_code",
+            "Place of Performance State Code",
             "naics_code", "Award Amount",
         ],
         "limit": 5,
@@ -203,7 +204,7 @@ def _enrich_profile_location(profile):
     for r in results:
         rname = (r.get("Recipient Name") or "").upper()
         if name.upper()[:15] in rname or rname[:15] in name.upper():
-            state = r.get("recipient_state_code")
+            state = r.get("recipient_state_code") or r.get("Place of Performance State Code")
             naics = r.get("naics_code")
             if state and not profile.get("state_code"):
                 profile["state_code"] = state
