@@ -503,7 +503,7 @@ def main():
         st.session_state.saved_company_data = None
 
     # Tabs
-    tab_dash, tab_detail, tab_rankings = st.tabs(["Dashboard", "Company Detail", "Rankings"])
+    tab_dash, tab_detail, tab_rankings, tab_batch = st.tabs(["Dashboard", "Company Detail", "Rankings", "Batch Score"])
 
     # ===================================================================
     # DASHBOARD TAB
@@ -1241,6 +1241,112 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
         else:
             st.warning("No scoring data available. Please try again later.")
 
+    # ===================================================================
+    # BATCH SCORE TAB
+    # ===================================================================
+    with tab_batch:
+        st.markdown(
+            "<div style='font-size:1.5em; font-weight:900; color:#1e3a8a; margin-bottom:5px;'>"
+            "Batch Score</div>"
+            "<p style='color:#64748b; margin-bottom:20px;'>"
+            "Paste a list of company names to score them all at once. "
+            "Export as CSV for CRM import (Salesforce, HubSpot, Excel).</p>",
+            unsafe_allow_html=True,
+        )
+
+        batch_input = st.text_area(
+            "Enter company names (one per line)",
+            height=200,
+            placeholder="BOOZ ALLEN HAMILTON INC\nLOCKHEED MARTIN CORPORATION\nGENERAL DYNAMICS INFORMATION TECHNOLOGY, INC.",
+        )
+
+        if st.button("Score All Companies", key="batch_score_btn"):
+            names = [n.strip() for n in batch_input.strip().split("\n") if n.strip()]
+            if not names:
+                st.warning("Please enter at least one company name.")
+            elif len(names) > 20:
+                st.warning("Maximum 20 companies per batch. Please reduce your list.")
+            else:
+                progress = st.progress(0, text="Starting batch scoring...")
+                all_profiles = []
+                failed = []
+
+                for i, name in enumerate(names):
+                    progress.progress(
+                        (i) / len(names),
+                        text=f"Fetching data for {name} ({i+1}/{len(names)})...",
+                    )
+                    try:
+                        profile = get_company_profile(name)
+                        if profile and (profile["total_prime_value"] + profile["total_sub_value"]) > 0:
+                            all_profiles.append(profile)
+                        else:
+                            failed.append(name)
+                    except Exception:
+                        failed.append(name)
+
+                if all_profiles:
+                    progress.progress(0.9, text="Scoring companies...")
+                    scored_results = []
+                    for profile in all_profiles:
+                        scored = score_company(profile, all_profiles)
+                        env = calculate_environment_adjustment(
+                            scored.get("state_code"),
+                            scored.get("naics_code"),
+                            scored.get("prime_contractors", [None])[0] if scored.get("prime_contractors") else None,
+                        )
+                        scored = apply_environment_adjustment(scored, env)
+                        scored_results.append(scored)
+
+                    scored_results.sort(key=lambda x: x["total"], reverse=True)
+                    progress.progress(1.0, text="Done!")
+
+                    # Build CSV data
+                    csv_rows = []
+                    for s in scored_results:
+                        csv_rows.append({
+                            "Account Name": s["name"],
+                            "SUPPLY_1000_Score__c": int(s["total"]),
+                            "Contract_Volume__c": int(s["axes"].get("Contract Volume", 0)),
+                            "Diversification__c": int(s["axes"].get("Diversification", 0)),
+                            "Contract_Continuity__c": int(s["axes"].get("Contract Continuity", 0)),
+                            "Network_Position__c": int(s["axes"].get("Network Position", 0)),
+                            "Digital_Resilience__c": int(s["axes"].get("Digital Resilience", 0)),
+                            "Total_Contract_Value__c": round(s.get("total_value", 0), 2),
+                            "Agency_Count__c": s.get("agency_count", 0),
+                            "Sub_Contractor_Count__c": s.get("sub_contractor_count", 0),
+                            "Years_Active__c": s.get("years_active", 0),
+                            "YoY_Change__c": round(s.get("yoy_change", 0), 1),
+                            "State__c": s.get("state_code", ""),
+                            "Domain__c": s.get("domain", ""),
+                        })
+
+                    df = pd.DataFrame(csv_rows)
+
+                    # Display results table
+                    st.markdown("<div class='section-title'>RESULTS</div>", unsafe_allow_html=True)
+                    display_df = df[["Account Name", "SUPPLY_1000_Score__c", "Contract_Volume__c",
+                                     "Diversification__c", "Contract_Continuity__c",
+                                     "Network_Position__c", "Digital_Resilience__c",
+                                     "Total_Contract_Value__c"]].copy()
+                    display_df.columns = ["Company", "Total", "Volume", "Diversif.", "Continuity",
+                                          "Network", "Digital", "Contract Value"]
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+                    # CSV download
+                    csv_bytes = df.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        label="Download CSV (Salesforce-ready)",
+                        data=csv_bytes,
+                        file_name="supply_1000_batch_scores.csv",
+                        mime="text/csv",
+                    )
+
+                    if failed:
+                        st.warning(f"Could not find data for: {', '.join(failed)}")
+                else:
+                    progress.progress(1.0, text="Done.")
+                    st.error("No companies found in USAspending.gov. Check the company names and try again.")
 
 
 if __name__ == "__main__":
