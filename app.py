@@ -1348,6 +1348,23 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
                     progress.progress(1.0, text="Done.")
                     st.error("No companies found in USAspending.gov. Check the company names and try again.")
 
+        # Salesforce Import Guide download
+        st.markdown("<div class='section-title'>SALESFORCE IMPORT GUIDE</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<p style='color:#64748b; margin-bottom:10px;'>"
+            "Download the step-by-step guide to import your CSV into Salesforce. "
+            "No IT team needed. 5 minutes.</p>",
+            unsafe_allow_html=True,
+        )
+        from salesforce_guide import generate_salesforce_guide
+        guide_pdf = generate_salesforce_guide()
+        st.download_button(
+            label="Download Salesforce Import Guide (PDF)",
+            data=guide_pdf,
+            file_name="SUPPLY_1000_Salesforce_Import_Guide.pdf",
+            mime="application/pdf",
+        )
+
 
 if __name__ == "__main__":
     main()
