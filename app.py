@@ -535,14 +535,19 @@ def main():
         all_scores = []
         with st.spinner("Loading supply chain data from USAspending.gov..."):
             all_scores = score_all_top_companies(year=2024, limit=50)
-            # Apply environment adjustments to all companies
-            for s in all_scores:
+            # Apply vital pulse + environment adjustments to all companies
+            for i, s in enumerate(all_scores):
+                domain = s.get("domain")
+                if domain:
+                    vital = run_vital_pulse(domain)
+                    s = apply_vital_pulse_modifier(s, vital)
                 env = calculate_environment_adjustment(
                     s.get("state_code"),
                     s.get("naics_code"),
                     s.get("prime_contractors", [None])[0] if s.get("prime_contractors") else None,
                 )
                 s = apply_environment_adjustment(s, env)
+                all_scores[i] = s
             # Re-sort after adjustment
             all_scores.sort(key=lambda x: x["total"], reverse=True)
 
@@ -759,12 +764,20 @@ def main():
 
             # Total score centered (FRS-1000 pattern)
             display_total = int(data.get("total", 0))
+            base_axes_total = sum(int(data["axes"].get(k, 0)) for k in AXES_LABELS)
+            vp_adj = int(data.get("vp_adjustment", 0))
+            env_adj = int(data.get("env_adjustment", 0))
             st.markdown(f"""
             <div style="text-align:center; margin-top:4px; margin-bottom:10px;">
                 <div style="font-size:14px; letter-spacing:2px; color:#666;">TOTAL SCORE</div>
                 <div style="font-size:90px; font-weight:800; color:#2E7BE6; line-height:1;">
                     {display_total}
                     <span style="font-size:35px; color:#BBB;">/ 1000</span>
+                </div>
+                <div style="font-size:12px; color:#94a3b8; margin-top:4px;">
+                    5-Axis: {base_axes_total}
+                    {f' | VP-1000: {"+" if vp_adj >= 0 else ""}{vp_adj}' if vp_adj != 0 else ''}
+                    {f' | Environment: {"+" if env_adj >= 0 else ""}{env_adj}' if env_adj != 0 else ''}
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1290,6 +1303,10 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
                     scored_results = []
                     for profile in all_profiles:
                         scored = score_company(profile, all_profiles)
+                        domain = scored.get("domain")
+                        if domain:
+                            vital = run_vital_pulse(domain)
+                            scored = apply_vital_pulse_modifier(scored, vital)
                         env = calculate_environment_adjustment(
                             scored.get("state_code"),
                             scored.get("naics_code"),

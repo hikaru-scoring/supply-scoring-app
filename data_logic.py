@@ -830,11 +830,13 @@ def apply_environment_adjustment(scored_data, env_result):
     Adjusts total score based on GOV, REALESTATE, PORT, FRS scores.
     """
     if not env_result:
+        scored_data["env_adjustment"] = 0
         return scored_data
 
     adj = env_result["total_adjustment"]
     scored_data["total"] = _clamp(scored_data["total"] + adj, 0, 1000)
     scored_data["environment"] = env_result
+    scored_data["env_adjustment"] = adj
 
     return scored_data
 
@@ -863,7 +865,8 @@ def apply_vital_pulse_modifier(scored_data, vital_result):
         modifier = 0.8
 
     # Apply modifier to total (cap at 1000)
-    new_total = min(int(scored_data["total"] * modifier), 1000)
+    old_total = scored_data["total"]
+    new_total = min(int(old_total * modifier), 1000)
 
     # Hiring bonus to Contract Volume
     if vital_result.get("careers", {}).get("has_careers"):
@@ -875,6 +878,7 @@ def apply_vital_pulse_modifier(scored_data, vital_result):
     scored_data["total"] = new_total
     scored_data["vital_pulse"] = vital_result
     scored_data["vital_modifier"] = modifier
+    scored_data["vp_adjustment"] = new_total - old_total
 
     return scored_data
 
