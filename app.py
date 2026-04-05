@@ -535,12 +535,10 @@ def main():
         all_scores = []
         with st.spinner("Loading supply chain data from USAspending.gov..."):
             all_scores = score_all_top_companies(year=2024, limit=50)
-            # Apply vital pulse + environment adjustments to all companies
+            # Apply environment adjustments to all companies
+            # Note: VP-1000 is only applied in Company Detail and Batch Score
+            # to avoid slow loading (50 domain checks)
             for i, s in enumerate(all_scores):
-                domain = s.get("domain")
-                if domain:
-                    vital = run_vital_pulse(domain)
-                    s = apply_vital_pulse_modifier(s, vital)
                 env = calculate_environment_adjustment(
                     s.get("state_code"),
                     s.get("naics_code"),
