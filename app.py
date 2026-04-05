@@ -1358,7 +1358,7 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
                     st.download_button(
                         label="Download CSV (Salesforce-ready)",
                         data=csv_bytes,
-                        file_name="supply_1000_batch_scores.csv",
+                        file_name="SBA_Target_Risk_Scores_by_Scoring.csv",
                         mime="text/csv",
                     )
 
