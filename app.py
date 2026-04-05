@@ -592,7 +592,12 @@ def main():
                 unsafe_allow_html=True,
             )
 
-        st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='text-align:center; font-size:11px; color:#94a3b8; margin-top:-10px; margin-bottom:10px;'>"
+            "Scores include environment adjustment. VP-1000 vital pulse is applied in Company Detail and Batch Score."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         # Top 10 / Bottom 10
         col_top, col_bot = st.columns(2)
