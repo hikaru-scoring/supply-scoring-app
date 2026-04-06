@@ -32,6 +32,7 @@ st.set_page_config(page_title=APP_TITLE, page_icon="\u26d3\ufe0f", layout="wide"
 # Score history
 # ---------------------------------------------------------------------------
 SCORES_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "scores_history.json")
+SCORES_CACHE_FILE = os.path.join(os.path.dirname(__file__), "scores_cache.json")
 
 
 def _load_scores_history() -> dict:
@@ -39,6 +40,20 @@ def _load_scores_history() -> dict:
         with open(SCORES_HISTORY_FILE, "r") as f:
             return json.load(f)
     return {}
+
+
+def _load_scores_cache() -> list[dict]:
+    """Load pre-calculated scores from cache (includes VP-1000 + environment).
+    Returns list of scored company dicts, or empty list if cache not available.
+    """
+    if os.path.exists(SCORES_CACHE_FILE):
+        try:
+            with open(SCORES_CACHE_FILE, "r") as f:
+                cache = json.load(f)
+            return cache.get("companies", [])
+        except Exception:
+            pass
+    return []
 
 
 def render_score_delta(asset_name: str, current_total: int):
@@ -531,23 +546,24 @@ def main():
 **Data source:** USAspending.gov (free, public API) + direct SSL/DNS scanning for Digital Resilience (powered by CYBER-1000 engine).
 """)
 
-        # Load top companies
+        # Load top companies from pre-calculated cache (includes VP-1000 + environment)
         all_scores = []
-        with st.spinner("Loading supply chain data from USAspending.gov..."):
-            all_scores = score_all_top_companies(year=2024, limit=50)
-            # Apply environment adjustments to all companies
-            # Note: VP-1000 is only applied in Company Detail and Batch Score
-            # to avoid slow loading (50 domain checks)
-            for i, s in enumerate(all_scores):
-                env = calculate_environment_adjustment(
-                    s.get("state_code"),
-                    s.get("naics_code"),
-                    s.get("prime_contractors", [None])[0] if s.get("prime_contractors") else None,
-                )
-                s = apply_environment_adjustment(s, env)
-                all_scores[i] = s
-            # Re-sort after adjustment
-            all_scores.sort(key=lambda x: x["total"], reverse=True)
+        cached_scores = _load_scores_cache()
+        if cached_scores:
+            all_scores = cached_scores
+        else:
+            # Fallback: calculate live if cache not available
+            with st.spinner("Loading supply chain data from USAspending.gov..."):
+                all_scores = score_all_top_companies(year=2024, limit=50)
+                for i, s in enumerate(all_scores):
+                    env = calculate_environment_adjustment(
+                        s.get("state_code"),
+                        s.get("naics_code"),
+                        s.get("prime_contractors", [None])[0] if s.get("prime_contractors") else None,
+                    )
+                    s = apply_environment_adjustment(s, env)
+                    all_scores[i] = s
+                all_scores.sort(key=lambda x: x["total"], reverse=True)
 
         if not all_scores:
             st.error("Could not load data from USAspending.gov. Please try again later.")
@@ -594,7 +610,7 @@ def main():
 
         st.markdown(
             "<div style='text-align:center; font-size:11px; color:#94a3b8; margin-top:-10px; margin-bottom:10px;'>"
-            "Scores include environment adjustment. VP-1000 vital pulse is applied in Company Detail and Batch Score."
+            "Scores include VP-1000 vital pulse and environment adjustment (pre-calculated daily)."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -676,15 +692,19 @@ def main():
             key="company_search",
         )
 
-        # Load scores for dropdown
+        # Load scores for dropdown (prefer cache with VP-1000 + environment)
         if "all_scores_cache" not in st.session_state:
             st.session_state.all_scores_cache = []
 
         all_scores_for_select = st.session_state.all_scores_cache
         if not all_scores_for_select:
-            with st.spinner("Loading company list..."):
-                all_scores_for_select = score_all_top_companies(year=2024, limit=50)
-                st.session_state.all_scores_cache = all_scores_for_select
+            cached_scores_detail = _load_scores_cache()
+            if cached_scores_detail:
+                all_scores_for_select = cached_scores_detail
+            else:
+                with st.spinner("Loading company list..."):
+                    all_scores_for_select = score_all_top_companies(year=2024, limit=50)
+            st.session_state.all_scores_cache = all_scores_for_select
 
         company_names = [s["name"] for s in all_scores_for_select]
 
@@ -1165,10 +1185,14 @@ Domain guess: {domain}
             unsafe_allow_html=True,
         )
 
-        # Load scores
+        # Load scores from cache (includes VP-1000 + environment)
         if not all_scores_for_select:
-            with st.spinner("Loading rankings..."):
-                all_scores_for_select = score_all_top_companies(year=2024, limit=50)
+            cached_scores_rank = _load_scores_cache()
+            if cached_scores_rank:
+                all_scores_for_select = cached_scores_rank
+            else:
+                with st.spinner("Loading rankings..."):
+                    all_scores_for_select = score_all_top_companies(year=2024, limit=50)
 
         # Toggle for network metrics
         show_net_metrics = st.checkbox("Show network metrics (PageRank, Betweenness)", value=False)
