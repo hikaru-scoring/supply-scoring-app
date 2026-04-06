@@ -389,6 +389,11 @@ def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
                     profile["years_active"].append(year - 1)
                 break
 
+        try:
+            _enrich_profile_location(profile)
+        except Exception:
+            pass
+
         profiles.append(profile)
         time.sleep(0.2)
 
