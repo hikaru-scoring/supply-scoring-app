@@ -28,6 +28,71 @@ BASE_URL = "https://api.usaspending.gov/api/v2"
 
 # Years to analyze for continuity and growth
 ANALYSIS_YEARS = list(range(2020, 2026))
+
+# Suffixes to strip when normalizing company names for deduplication
+_COMPANY_SUFFIXES = re.compile(
+    r'\b(CORPORATION|CORP|INCORPORATED|INC|LLC|LLP|L\.?P\.?|PTE|LTD|CO|'
+    r'COMPANY|GROUP|HOLDINGS|SERVICES|TECHNOLOGIES|SOLUTIONS|ENTERPRISES|'
+    r'INTERNATIONAL|INTL)\b\.?',
+    re.IGNORECASE,
+)
+
+
+def _normalize_company_name(name: str) -> str:
+    """Normalize a company name by stripping suffixes and punctuation.
+
+    Returns an uppercase base name for comparison.
+    e.g. "LOCKHEED MARTIN CORPORATION" -> "LOCKHEED MARTIN"
+         "HUNTINGTON INGALLS INC." -> "HUNTINGTON INGALLS"
+    """
+    n = name.upper().strip()
+    # Remove leading "THE "
+    if n.startswith("THE "):
+        n = n[4:]
+    # Remove known suffixes
+    n = _COMPANY_SUFFIXES.sub("", n)
+    # Remove punctuation except spaces
+    n = re.sub(r'[^A-Z0-9 ]', '', n)
+    # Collapse whitespace
+    n = re.sub(r'\s+', ' ', n).strip()
+    return n
+
+
+def _deduplicate_recipients(entries: list[dict]) -> list[dict]:
+    """Deduplicate recipient entries that refer to the same parent company.
+
+    Groups entries by normalized base name. For each group, merges contract
+    values (summed) and keeps the name/metadata from the entry with the
+    highest amount.
+
+    Args:
+        entries: list of dicts from get_top_recipients, each with 'name' and 'amount'.
+
+    Returns:
+        Deduplicated list, sorted descending by merged amount.
+    """
+    groups: dict[str, list[dict]] = {}
+    for entry in entries:
+        name = entry.get("name") or ""
+        base = _normalize_company_name(name)
+        if not base:
+            continue
+        groups.setdefault(base, []).append(entry)
+
+    merged = []
+    for base, group in groups.items():
+        # Sort group by amount descending so the biggest entry is primary
+        group.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
+        primary = dict(group[0])  # shallow copy
+        total_amount = sum(float(e.get("amount") or 0) for e in group)
+        primary["amount"] = total_amount
+        # Store all variant names for reference
+        if len(group) > 1:
+            primary["_merged_names"] = [e.get("name") for e in group]
+        merged.append(primary)
+
+    merged.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
+    return merged
 CURRENT_YEAR = 2025
 PREV_YEAR = 2024
 
@@ -329,9 +394,17 @@ def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
     This is the main entry point for Dashboard / Rankings.
     Returns a list of scored company dicts.
     """
-    top = get_top_recipients(year=year, limit=limit)
+    # Fetch more than needed to have enough after deduplication
+    raw_limit = min(limit + 30, 100)
+    top = get_top_recipients(year=year, limit=raw_limit)
     if not top:
         return []
+
+    # Deduplicate entries that refer to the same parent company
+    top = _deduplicate_recipients(top)
+
+    # Trim to requested limit after deduplication
+    top = top[:limit]
 
     profiles = []
     for entry in top:
@@ -379,10 +452,13 @@ def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
                 sub_names.add(sub_name)
         profile["sub_contractors"] = list(sub_names)
 
-        # Previous year for growth
-        prev_top = get_top_recipients(year=year - 1, limit=limit)
-        for pt in (prev_top or []):
-            if pt.get("name") == name:
+        # Previous year for growth (deduplicate prev year too)
+        prev_top = get_top_recipients(year=year - 1, limit=raw_limit)
+        prev_deduped = _deduplicate_recipients(prev_top or [])
+        name_base = _normalize_company_name(name)
+        for pt in prev_deduped:
+            pt_base = _normalize_company_name(pt.get("name") or "")
+            if pt_base == name_base:
                 prev_amount = pt.get("amount") or 0
                 profile["yearly_values"][year - 1] = float(prev_amount)
                 if year - 1 not in profile["years_active"]:
