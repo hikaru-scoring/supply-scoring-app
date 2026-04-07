@@ -817,11 +817,7 @@ def main():
                     <span style="font-size:35px; color:#BBB;">/ 1000</span>
                     {_delta_html}
                 </div>
-                <div style="font-size:12px; color:#94a3b8; margin-top:4px;">
-                    5-Axis: {base_axes_total}
-                    {f' | VP-1000: {"+" if vp_adj >= 0 else ""}{vp_adj}' if vp_adj != 0 else ''}
-                    {f' | Environment: {"+" if env_adj >= 0 else ""}{env_adj}' if env_adj != 0 else ''}
-                </div>
+                <!-- axis breakdown available in radar chart below -->
             </div>
             """, unsafe_allow_html=True)
 
