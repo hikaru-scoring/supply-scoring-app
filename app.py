@@ -805,9 +805,9 @@ def main():
                 if _prev is not None:
                     _delta = display_total - _prev
                     if _delta > 0:
-                        _delta_html = f'<span style="font-size:24px; font-weight:700; color:#10b981; margin-left:12px;">+{_delta}</span>'
+                        _delta_html = f'<span style="font-size:24px; font-weight:700; color:#10b981; margin-left:12px;">+{_delta}</span><span style="font-size:14px; color:#94a3b8; margin-left:4px;">({_prev})</span>'
                     elif _delta < 0:
-                        _delta_html = f'<span style="font-size:24px; font-weight:700; color:#ef4444; margin-left:12px;">{_delta}</span>'
+                        _delta_html = f'<span style="font-size:24px; font-weight:700; color:#ef4444; margin-left:12px;">{_delta}</span><span style="font-size:14px; color:#94a3b8; margin-left:4px;">({_prev})</span>'
 
             st.markdown(f"""
             <div style="text-align:center; margin-top:4px; margin-bottom:10px;">
