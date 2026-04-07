@@ -790,12 +790,32 @@ def main():
             base_axes_total = sum(int(data["axes"].get(k, 0)) for k in AXES_LABELS)
             vp_adj = int(data.get("vp_adjustment", 0))
             env_adj = int(data.get("env_adjustment", 0))
+
+            # Score delta for inline display
+            _delta_html = ""
+            _history = _load_scores_history()
+            if _history:
+                _dates = sorted(_history.keys(), reverse=True)
+                _prev = None
+                for _d in _dates:
+                    _s = _history[_d].get(data["name"])
+                    if _s is not None:
+                        _prev = _s
+                        break
+                if _prev is not None:
+                    _delta = display_total - _prev
+                    if _delta > 0:
+                        _delta_html = f'<span style="font-size:24px; font-weight:700; color:#10b981; margin-left:12px;">+{_delta}</span>'
+                    elif _delta < 0:
+                        _delta_html = f'<span style="font-size:24px; font-weight:700; color:#ef4444; margin-left:12px;">{_delta}</span>'
+
             st.markdown(f"""
             <div style="text-align:center; margin-top:4px; margin-bottom:10px;">
                 <div style="font-size:14px; letter-spacing:2px; color:#666;">TOTAL SCORE</div>
                 <div style="font-size:90px; font-weight:800; color:#2E7BE6; line-height:1;">
                     {display_total}
                     <span style="font-size:35px; color:#BBB;">/ 1000</span>
+                    {_delta_html}
                 </div>
                 <div style="font-size:12px; color:#94a3b8; margin-top:4px;">
                     5-Axis: {base_axes_total}
@@ -804,8 +824,6 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
-            render_score_delta(data["name"], display_total)
 
             # 3-Year Risk Indicator (based on backtest of 1,000 companies)
             _risk_bands = [
@@ -831,9 +849,13 @@ def main():
                 _risk_label = "Low"
             st.markdown(f"""
             <div style="text-align:center; margin: -4px 0 16px;">
-                <span style="font-size:11px; color:{_risk_color}; font-weight:600;">
-                    3Y Risk: {_risk_pct:.0f}%
+                <span style="font-size:12px; color:{_risk_color}; font-weight:700;
+                    background:{_risk_color}15; padding:4px 14px; border-radius:20px;">
+                    3-Year Risk: {_risk_pct:.1f}% negative outcome ({_risk_label})
                 </span>
+                <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
+                    Based on backtest of 1,000 government contractors (FY2015 + FY2018)
+                </div>
             </div>
             """, unsafe_allow_html=True)
 
