@@ -831,13 +831,9 @@ def main():
                 _risk_label = "Low"
             st.markdown(f"""
             <div style="text-align:center; margin: -4px 0 16px;">
-                <span style="font-size:12px; color:{_risk_color}; font-weight:700;
-                    background:{_risk_color}15; padding:4px 14px; border-radius:20px;">
-                    3-Year Risk: {_risk_pct:.1f}% negative outcome ({_risk_label})
+                <span style="font-size:11px; color:{_risk_color}; font-weight:600;">
+                    3Y Risk: {_risk_pct:.0f}%
                 </span>
-                <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
-                    Based on backtest of 1,000 government contractors (FY2015 + FY2018)
-                </div>
             </div>
             """, unsafe_allow_html=True)
 
