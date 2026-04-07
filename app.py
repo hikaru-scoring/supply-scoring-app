@@ -807,6 +807,40 @@ def main():
 
             render_score_delta(data["name"], display_total)
 
+            # 3-Year Risk Indicator (based on backtest of 1,000 companies)
+            _risk_bands = [
+                (300, 43.8),   # avg of FY2015 31.6% and FY2018 55.9%
+                (400, 31.1),   # avg of FY2015 27.5% and FY2018 34.7%
+                (500, 22.4),   # avg of FY2015 20.9% and FY2018 23.8%
+                (600, 17.6),   # avg of FY2015 16.0% and FY2018 19.2%
+                (1001, 9.3),   # avg of FY2015 7.6% and FY2018 11.0%
+            ]
+            _risk_pct = 9.3
+            for _threshold, _pct in _risk_bands:
+                if display_total < _threshold:
+                    _risk_pct = _pct
+                    break
+            if _risk_pct >= 30:
+                _risk_color = "#ef4444"
+                _risk_label = "High"
+            elif _risk_pct >= 20:
+                _risk_color = "#f59e0b"
+                _risk_label = "Moderate"
+            else:
+                _risk_color = "#22c55e"
+                _risk_label = "Low"
+            st.markdown(f"""
+            <div style="text-align:center; margin: -4px 0 16px;">
+                <span style="font-size:12px; color:{_risk_color}; font-weight:700;
+                    background:{_risk_color}15; padding:4px 14px; border-radius:20px;">
+                    3-Year Risk: {_risk_pct:.1f}% negative outcome ({_risk_label})
+                </span>
+                <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
+                    Based on backtest of 1,000 government contractors (FY2015 + FY2018)
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
             # Radar (left) + Score cards (right)
             col_left, col_right = st.columns([1.5, 1])
 
@@ -1240,6 +1274,15 @@ Domain guess: {domain}
                             f"</div>"
                         )
 
+                # 3-Year Risk for ranking card
+                _r_bands = [(300, 43.8), (400, 31.1), (500, 22.4), (600, 17.6), (1001, 9.3)]
+                _r_pct = 9.3
+                for _rt, _rp in _r_bands:
+                    if total < _rt:
+                        _r_pct = _rp
+                        break
+                _r_col = "#ef4444" if _r_pct >= 30 else "#f59e0b" if _r_pct >= 20 else "#22c55e"
+
                 st.markdown(
                     f"<div class='card' style='margin-bottom:12px; padding:18px 24px;'>"
                     f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'>"
@@ -1247,7 +1290,10 @@ Domain guess: {domain}
                     f"<span style='font-size:20px; font-weight:900; color:#94a3b8; margin-right:12px;'>#{rank}</span>"
                     f"<span style='font-size:18px; font-weight:700; color:#1e293b;'>{s['name']}</span>"
                     f"</div>"
+                    f"<div style='text-align:right;'>"
                     f"<div style='font-size:32px; font-weight:900; color:{color};'>{total}</div>"
+                    f"<div style='font-size:10px; color:{_r_col}; font-weight:600;'>3Y Risk: {_r_pct:.1f}%</div>"
+                    f"</div>"
                     f"</div>"
                     f"<div style='display:flex; gap:20px; font-size:12px; color:#64748b; margin-bottom:10px;'>"
                     f"<span>Value: {_fmt_dollar(s.get('total_value', 0))}</span>"
