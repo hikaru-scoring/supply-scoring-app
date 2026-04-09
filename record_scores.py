@@ -46,7 +46,7 @@ def main():
                 "filters": {
                     "award_type_codes": ["A", "B", "C", "D"],
                     "time_period": [
-                        {"start_date": "2024-01-01", "end_date": "2024-12-31"}
+                        {"start_date": "2025-01-01", "end_date": "2025-12-31"}
                     ],
                 },
                 "category": "recipient",
@@ -87,7 +87,7 @@ def main():
 
     # Score top companies (base 5-axis scores)
     print("  Scoring top companies (base 5-axis)...")
-    scored = score_all_top_companies(year=2024, limit=50)
+    scored = score_all_top_companies(year=2025, limit=50)
 
     if not scored or len(scored) < 5:
         print(f"ERROR: Only {len(scored) if scored else 0} companies scored, skipping save")

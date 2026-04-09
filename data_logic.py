@@ -93,8 +93,8 @@ def _deduplicate_recipients(entries: list[dict]) -> list[dict]:
 
     merged.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
     return merged
-CURRENT_YEAR = 2025
-PREV_YEAR = 2024
+CURRENT_YEAR = 2026
+PREV_YEAR = 2025
 
 
 def _clamp(value: float, lo: float = 0, hi: float = 200) -> int:
@@ -123,7 +123,7 @@ def _safe_post(url: str, payload: dict, retries: int = 2, delay: float = 1.0):
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def search_prime_awards(agency_name=None, recipient_name=None, year=2024, limit=100):
+def search_prime_awards(agency_name=None, recipient_name=None, year=2025, limit=100):
     """Search prime contract awards from USAspending.gov."""
     filters = {
         "award_type_codes": ["A", "B", "C", "D"],
@@ -161,7 +161,7 @@ def search_prime_awards(agency_name=None, recipient_name=None, year=2024, limit=
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def search_sub_awards(agency_name=None, prime_recipient=None, year=2024, limit=100):
+def search_sub_awards(agency_name=None, prime_recipient=None, year=2025, limit=100):
     """Search sub-contract awards from USAspending.gov."""
     filters = {
         "award_type_codes": ["A", "B", "C", "D"],
@@ -199,7 +199,7 @@ def search_sub_awards(agency_name=None, prime_recipient=None, year=2024, limit=1
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_top_recipients(year=2024, limit=50):
+def get_top_recipients(year=2025, limit=50):
     """Get top recipients by contract spending."""
     payload = {
         "filters": {
@@ -247,7 +247,7 @@ def _enrich_profile_location(profile):
         "filters": {
             "award_type_codes": ["A", "B", "C", "D"],
             "time_period": [
-                {"start_date": "2024-01-01", "end_date": "2024-12-31"}
+                {"start_date": "2025-01-01", "end_date": "2025-12-31"}
             ],
             "recipient_search_text": [name],
         },
@@ -409,7 +409,7 @@ def get_company_profile(company_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
+def get_top_company_profiles(year=2025, limit=50) -> list[dict]:
     """Get profiles for the top recipients by contract value.
 
     This is the main entry point for Dashboard / Rankings.
@@ -505,7 +505,7 @@ def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_supply_chain_network(company_name: str, year=2024) -> dict:
+def get_supply_chain_network(company_name: str, year=2025) -> dict:
     """Get the supply chain network for a company.
 
     Returns dict with:
@@ -852,25 +852,23 @@ def score_company(profile: dict, all_profiles: list[dict]) -> dict:
 
     # -------------------------------------------------------------------
     # Axis 4: Network Position (0-200)
-    # Prime vs sub, number of sub-contractors, hub importance
+    # Prime vs sub status + relative network footprint (proxied by contract scale).
+    # USAspending sub-award API does not allow filtering by prime, so direct
+    # sub-count is unreliable. We use contract scale as a proxy for network reach
+    # because larger primes objectively manage larger sub-contractor networks.
     # -------------------------------------------------------------------
     is_prime = profile["total_prime_value"] > 0
-    has_subs = len(profile["sub_contractors"]) > 0
+    position_base = 60 if is_prime else 30
 
-    # Base: being a prime is worth more
-    position_base = 80 if is_prime else 40
+    # Network footprint proxy: percentile of total contract value
+    footprint_pct = _percentile_rank(this_total_value, all_total_values)
+    footprint_score = footprint_pct * 100
 
-    # Sub-contractor network size
-    sub_count = len(profile["sub_contractors"])
-    sub_pct = _percentile_rank(sub_count, all_sub_counts)
-    sub_score = sub_pct * 80
+    # Continuity multiplier: established players have wider networks
+    years_factor = min(len(profile["years_active"]) / 5.0, 1.0)
+    continuity_bonus = years_factor * 40
 
-    # Hub bonus: both prime and has many subs
-    hub_bonus = 0
-    if is_prime and has_subs:
-        hub_bonus = min(sub_count * 5, 40)
-
-    network_position = _clamp(position_base + sub_score + hub_bonus)
+    network_position = _clamp(position_base + footprint_score + continuity_bonus)
 
     # -------------------------------------------------------------------
     # Axis 5: Digital Resilience (0-200)
@@ -989,7 +987,7 @@ def apply_vital_pulse_modifier(scored_data, vital_result):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def score_all_top_companies(year=2024, limit=50) -> list[dict]:
+def score_all_top_companies(year=2025, limit=50) -> list[dict]:
     """Fetch top recipients, build profiles, score them all.
 
     Returns sorted list of scored company dicts (highest first).

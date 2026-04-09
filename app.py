@@ -554,7 +554,7 @@ def main():
         else:
             # Fallback: calculate live if cache not available
             with st.spinner("Loading supply chain data from USAspending.gov..."):
-                all_scores = score_all_top_companies(year=2024, limit=50)
+                all_scores = score_all_top_companies(year=2025, limit=50)
                 for i, s in enumerate(all_scores):
                     env = calculate_environment_adjustment(
                         s.get("state_code"),
@@ -704,7 +704,7 @@ def main():
                 all_scores_for_select = cached_scores_detail
             else:
                 with st.spinner("Loading company list..."):
-                    all_scores_for_select = score_all_top_companies(year=2024, limit=50)
+                    all_scores_for_select = score_all_top_companies(year=2025, limit=50)
             st.session_state.all_scores_cache = all_scores_for_select
 
         company_names = [s["name"] for s in all_scores_for_select]
@@ -944,8 +944,8 @@ def main():
                         elif axis == "Network Position":
                             has_prime = data.get("total_prime_value", 0) > 0
                             st.markdown(f"""
-**Formula:** Base 80 if the company is a prime contractor, 40 if sub-only. Plus percentile rank of sub-contractor network size (x80). Plus a hub bonus for primes that also manage many subs. Capped at 200.
-**Raw Data:** Is prime: {'Yes' if has_prime else 'No'}
+**Formula:** Base 60 if the company is a prime contractor, 30 if sub-only. Plus percentile rank of total contract value (x100) as a network footprint proxy. Plus a continuity bonus (up to 40) for companies active across all 5 years. Capped at 200.
+**Raw Data:** Is prime: {'Yes' if has_prime else 'No'} | Years active: {data.get('years_active', 0)}
 **Source:** USAspending.gov
                             """)
                         elif axis == "Digital Resilience":
@@ -1085,7 +1085,7 @@ Domain guess: {domain}
             # Supply chain network visualization
             st.markdown("<div class='section-title'>SUPPLY CHAIN MAP</div>", unsafe_allow_html=True)
             with st.spinner("Loading supply chain network..."):
-                network = get_supply_chain_network(data["name"], year=2024)
+                network = get_supply_chain_network(data["name"], year=2025)
             render_network_graph(network, data["name"])
 
             # Network details
@@ -1093,14 +1093,14 @@ Domain guess: {domain}
             with col_primes:
                 prime_contracts = network.get("prime_contracts", [])
                 if prime_contracts:
-                    st.markdown("**Prime Contracts (from agencies, FY2024):**")
+                    st.markdown("**Prime Contracts (from agencies, FY2025):**")
                     for pc in prime_contracts[:10]:
                         st.markdown(
                             f"- {pc['agency']}: {_fmt_dollar(pc['amount'])}"
                         )
                 sub_received = network.get("sub_contracts_received", [])
                 if sub_received:
-                    st.markdown("**Sub-contracts received (from primes, FY2024):**")
+                    st.markdown("**Sub-contracts received (from primes, FY2025):**")
                     for sr in sub_received[:10]:
                         st.markdown(
                             f"- {sr['prime_name']}: {_fmt_dollar(sr['amount'])}"
@@ -1108,7 +1108,7 @@ Domain guess: {domain}
             with col_subs:
                 sub_given = network.get("sub_contracts_given", [])
                 if sub_given:
-                    st.markdown("**Sub-contracts given (to subs, FY2024):**")
+                    st.markdown("**Sub-contracts given (to subs, FY2025):**")
                     for sg in sub_given[:10]:
                         st.markdown(
                             f"- {sg['sub_name']}: {_fmt_dollar(sg['amount'])}"
@@ -1208,7 +1208,7 @@ Domain guess: {domain}
                 all_scores_for_select = cached_scores_rank
             else:
                 with st.spinner("Loading rankings..."):
-                    all_scores_for_select = score_all_top_companies(year=2024, limit=50)
+                    all_scores_for_select = score_all_top_companies(year=2025, limit=50)
 
         # Toggle for network metrics
         show_net_metrics = st.checkbox("Show network metrics (PageRank, Betweenness)", value=False)
@@ -1338,8 +1338,9 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
                 "Backtest Report Available</div>"
                 "<div style='font-size:12px; color:#64748b;'>"
                 "We backtested 1,000 government contractors across FY2015 and FY2018. "
-                "Low-scoring companies (below 400) had a 27 to 35 percent chance of losing "
-                "contracts within 3 years. Download the full report below.</div>"
+                "Companies with a score below 400 had a 31 percent chance of losing "
+                "contracts or seeing a 50 percent drop within 3 years. Companies above "
+                "600 had only a 9 percent chance. Download the full report below.</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
