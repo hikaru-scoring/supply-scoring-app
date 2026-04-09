@@ -743,6 +743,8 @@ def main():
             if existing:
                 # Re-score with cyber scan enabled for detail view
                 data = dict(existing)
+                # Deep copy axes so we don't mutate cached object
+                data["axes"] = dict(data["axes"])
                 from data_logic import _guess_domain, _scan_domain_quick
                 domain = data.get("domain") or _guess_domain(selected_name)
                 if domain:
@@ -750,18 +752,35 @@ def main():
                         cyber_score, cyber_detail = _scan_domain_quick(domain)
                     data["domain"] = domain
                     data["digital_score_detail"] = cyber_detail
-                    # Recalculate with real cyber score
-                    four_axes = sum(
-                        data["axes"][k] for k in ["Contract Volume", "Diversification",
-                                                   "Contract Continuity", "Network Position"]
-                    )
+                    # Replace cyber axis without stripping VP/env adjustments
+                    old_cyber = data["axes"].get("Digital Resilience", 0)
                     data["axes"]["Digital Resilience"] = cyber_score
-                    data["total"] = four_axes + cyber_score
+                    # Adjust total by the cyber delta only, preserving VP/env baked into cached total
+                    data["total"] = max(0, min(1000, data.get("total", 0) + (cyber_score - old_cyber)))
             else:
                 with st.spinner(f"Building profile for {selected_name}..."):
                     profile = get_company_profile(selected_name)
                     profile["_run_cyber_scan"] = True
-                    data = score_company(profile, [profile])
+                    # Score against the full cached population, not just self
+                    population = all_scores_for_select if all_scores_for_select else [profile]
+                    # score_company expects raw profiles in population; convert if needed
+                    if all_scores_for_select:
+                        # Build minimal profile-like dicts for percentile comparison
+                        pop_profiles = [{
+                            "name": s["name"],
+                            "total_prime_value": s.get("total_value", 0),
+                            "total_sub_value": 0,
+                            "agencies": ["x"] * s.get("agency_count", 0),
+                            "prime_contractors": [],
+                            "sub_contractors": ["x"] * s.get("sub_contractor_count", 0),
+                            "yearly_values": s.get("yearly_values", {}),
+                            "contract_count": s.get("contract_count", 1),
+                            "years_active": list(range(s.get("years_active", 1))),
+                        } for s in all_scores_for_select]
+                        pop_profiles.append(profile)
+                        data = score_company(profile, pop_profiles)
+                    else:
+                        data = score_company(profile, [profile])
 
             # Save/Clear + PDF/CSV buttons
             col_btn1, col_btn2, col_btn3, col_btn4, col_btn_rest = st.columns([1, 1, 1.5, 1.5, 5.5])

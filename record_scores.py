@@ -31,8 +31,9 @@ def main():
     else:
         history = {}
 
-    # Skip if already recorded today
-    if today_str in history:
+    # Skip if already recorded today (unless --force is passed)
+    force = "--force" in sys.argv
+    if today_str in history and not force:
         print(f"[SUPPLY-1000] Scores already recorded for {today_str}, skipping")
         sys.exit(0)
 

@@ -308,6 +308,10 @@ def get_company_profile(company_name: str) -> dict:
         "years_active": set(),
     }
 
+    # Track awards by ID to prevent counting multi-year contracts more than once
+    seen_prime_ids: set = set()
+    seen_sub_ids: set = set()
+
     # Fetch prime awards for each year
     for year in ANALYSIS_YEARS:
         primes = search_prime_awards(recipient_name=company_name, year=year, limit=50)
@@ -315,6 +319,15 @@ def get_company_profile(company_name: str) -> dict:
         for award in primes:
             rname = (award.get("Recipient Name") or "").upper()
             if company_name.upper() in rname or rname in company_name.upper():
+                # Deduplicate by Award ID across years
+                award_id = award.get("Award ID") or award.get("generated_internal_id")
+                if award_id and award_id in seen_prime_ids:
+                    # Multi-year contract already counted; just mark year as active
+                    profile["years_active"].add(year)
+                    continue
+                if award_id:
+                    seen_prime_ids.add(award_id)
+
                 amount = award.get("Award Amount") or 0
                 if isinstance(amount, str):
                     try:
@@ -344,8 +357,16 @@ def get_company_profile(company_name: str) -> dict:
         # Search broadly and filter
         subs_as_sub = search_sub_awards(year=year, limit=100)
         for sub in subs_as_sub:
-            sub_name = (sub.get("Sub-Awardee Name") or "").upper()
-            if company_name.upper() in sub_name or sub_name in company_name.upper():
+            sub_name_str = (sub.get("Sub-Awardee Name") or "").upper()
+            if company_name.upper() in sub_name_str or sub_name_str in company_name.upper():
+                # Deduplicate by Sub-Award ID across years
+                sub_id = sub.get("Sub-Award ID") or sub.get("internal_id")
+                if sub_id and sub_id in seen_sub_ids:
+                    profile["years_active"].add(year)
+                    continue
+                if sub_id:
+                    seen_sub_ids.add(sub_id)
+
                 amount = sub.get("Sub-Award Amount") or 0
                 if isinstance(amount, str):
                     try:
@@ -429,8 +450,8 @@ def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
             "naics_code": None,
         }
 
-        # Quick prime award lookup for agency info and contract count
-        primes = search_prime_awards(recipient_name=name, year=year, limit=20)
+        # Prime award lookup for agency info and contract count (raised limit)
+        primes = search_prime_awards(recipient_name=name, year=year, limit=100)
         agencies_set = set()
         count = 0
         for award in primes:
@@ -443,8 +464,8 @@ def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
         profile["agencies"] = list(agencies_set)
         profile["contract_count"] = max(count, 1)
 
-        # Quick sub-award lookup
-        subs = search_sub_awards(prime_recipient=name, year=year, limit=20)
+        # Sub-award lookup (raised limit to capture larger networks)
+        subs = search_sub_awards(prime_recipient=name, year=year, limit=100)
         sub_names = set()
         for sub in subs:
             sub_name = sub.get("Sub-Awardee Name")
@@ -452,18 +473,21 @@ def get_top_company_profiles(year=2024, limit=50) -> list[dict]:
                 sub_names.add(sub_name)
         profile["sub_contractors"] = list(sub_names)
 
-        # Previous year for growth (deduplicate prev year too)
-        prev_top = get_top_recipients(year=year - 1, limit=raw_limit)
-        prev_deduped = _deduplicate_recipients(prev_top or [])
-        name_base = _normalize_company_name(name)
-        for pt in prev_deduped:
-            pt_base = _normalize_company_name(pt.get("name") or "")
-            if pt_base == name_base:
-                prev_amount = pt.get("amount") or 0
-                profile["yearly_values"][year - 1] = float(prev_amount)
-                if year - 1 not in profile["years_active"]:
-                    profile["years_active"].append(year - 1)
-                break
+        # Multi-year history (last 5 years) for proper Years Active and growth
+        history_years = list(range(year - 4, year))  # year-4 to year-1
+        for hy in history_years:
+            hy_top = get_top_recipients(year=hy, limit=raw_limit)
+            hy_deduped = _deduplicate_recipients(hy_top or [])
+            name_base = _normalize_company_name(name)
+            for pt in hy_deduped:
+                pt_base = _normalize_company_name(pt.get("name") or "")
+                if pt_base == name_base:
+                    hy_amount = pt.get("amount") or 0
+                    if float(hy_amount) > 0:
+                        profile["yearly_values"][hy] = float(hy_amount)
+                        if hy not in profile["years_active"]:
+                            profile["years_active"].append(hy)
+                    break
 
         try:
             _enrich_profile_location(profile)
