@@ -600,11 +600,12 @@ def main():
                 unsafe_allow_html=True,
             )
         with c4:
+            total_agencies = sum(s.get("agency_count", 0) for s in all_scores)
             st.markdown(
                 f"<div class='card' style='text-align:center; padding:25px;'>"
-                f"<div style='font-size:14px; color:#64748b; font-weight:600;'>SUB-CONTRACTORS</div>"
-                f"<div style='font-size:42px; font-weight:900; color:#1e293b;'>{total_subs}</div>"
-                f"<div style='font-size:12px; color:#94a3b8;'>in network</div></div>",
+                f"<div style='font-size:14px; color:#64748b; font-weight:600;'>AGENCIES TRACKED</div>"
+                f"<div style='font-size:42px; font-weight:900; color:#1e293b;'>{total_agencies}</div>"
+                f"<div style='font-size:12px; color:#94a3b8;'>across portfolio</div></div>",
                 unsafe_allow_html=True,
             )
 
@@ -1125,7 +1126,8 @@ Domain guess: {domain}
             with m2:
                 st.metric("Agencies", data.get("agency_count", 0))
             with m3:
-                st.metric("Sub-contractors", data.get("sub_contractor_count", 0))
+                _cc = data.get("contract_count", 0)
+                st.metric("Contracts", "100+" if _cc >= 100 else _cc)
             with m4:
                 st.metric("Years Active", data.get("years_active", 0))
 
@@ -1331,7 +1333,7 @@ Domain guess: {domain}
                     f"<div style='display:flex; gap:20px; font-size:12px; color:#64748b; margin-bottom:10px;'>"
                     f"<span>Value: {_fmt_dollar(s.get('total_value', 0))}</span>"
                     f"<span>Agencies: {s.get('agency_count', 0)}</span>"
-                    f"<span>Subs: {s.get('sub_contractor_count', 0)}</span>"
+                    f"<span>Contracts: {('100+' if s.get('contract_count', 0) >= 100 else s.get('contract_count', 0))}</span>"
                     f"<span>YoY: {s.get('yoy_change', 0):+.0%}</span>"
                     f"</div>"
                     f"{axis_bars}"
