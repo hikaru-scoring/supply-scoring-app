@@ -1,5 +1,5 @@
 # pdf_report.py
-"""Professional PDF report generator for SMB-1000 Strategic Credit Report."""
+"""Professional PDF report generator for SUPPLY-1000 Government Contractor Risk Report."""
 
 import io
 from datetime import datetime, timezone
@@ -25,8 +25,8 @@ BORDER_GRAY = colors.HexColor("#e2e8f0")
 
 
 def _score_color(score):
-    """Return color object based on score tier."""
-    if score >= 700:
+    """Return color object based on score tier (matches app.py thresholds)."""
+    if score >= 600:
         return GREEN
     if score >= 400:
         return AMBER
@@ -34,29 +34,32 @@ def _score_color(score):
 
 
 def _risk_rating(score):
-    """Return (label, color) for risk rating."""
-    if score >= 700:
+    """Return (label, color) for risk rating (matches 3-Year Risk bands)."""
+    if score >= 600:
         return "LOW RISK", GREEN
     if score >= 400:
-        return "CAUTION", AMBER
+        return "MODERATE RISK", AMBER
     return "HIGH RISK", RED
 
 
 def _risk_advisory(score):
     """Return advisory statement based on score."""
-    if score >= 700:
+    if score >= 600:
         return (
-            "Strong external environment and solid digital infrastructure "
-            "indicate stable growth prospects."
+            "Strong contract base and stable diversification across agencies. "
+            "Backtest data shows about 9 percent of companies in this score "
+            "range experienced a negative outcome within 3 years."
         )
     if score >= 400:
         return (
-            "External factors (port disruption, fiscal environment) may "
-            "pressure cash flow. Monitoring recommended."
+            "Moderate concentration or limited continuity. Backtest data shows "
+            "about 22 percent of companies in this score range experienced a "
+            "negative outcome within 3 years."
         )
     return (
-        "Elevated survival risk. Digital infrastructure gaps and supply "
-        "chain vulnerabilities detected. Early review recommended."
+        "Elevated risk. Limited contract base, low diversification, or weak "
+        "continuity. Backtest data shows about 35 percent of companies in this "
+        "score range experienced a negative outcome within 3 years."
     )
 
 
@@ -215,7 +218,7 @@ def generate_supply_pdf(scored_data: dict, company_name: str = "", all_scores: l
     # ------------------------------------------------------------------
     elements.append(Paragraph("SCORING PTE. LTD.", styles["BrandTitle"]))
     elements.append(Spacer(1, 2 * mm))
-    elements.append(Paragraph("SMB-1000 Strategic Credit Report", styles["ReportTitle"]))
+    elements.append(Paragraph("SUPPLY-1000 Government Contractor Risk Report", styles["ReportTitle"]))
     elements.append(Spacer(1, 3 * mm))
     elements.append(Paragraph(name, styles["CompanyName"]))
     elements.append(Paragraph(
@@ -328,57 +331,8 @@ def generate_supply_pdf(scored_data: dict, company_name: str = "", all_scores: l
     elements.append(axis_table)
     elements.append(Spacer(1, 4 * mm))
 
-    # ------------------------------------------------------------------
-    # Section 4: Environment Adjustments (Layer 1)
-    # ------------------------------------------------------------------
-    elements.append(Paragraph("ENVIRONMENT ADJUSTMENTS (LAYER 1)", styles["SectionHeader"]))
-
-    env = scored_data.get("environment")
-    if env:
-        details = env.get("details", {})
-        env_table_data = [
-            [
-                Paragraph("<b>Source</b>", styles["ReportBody"]),
-                Paragraph("<b>Adjustment</b>", styles["ReportBody"]),
-            ]
-        ]
-        for source, description in details.items():
-            env_table_data.append([
-                Paragraph(source, styles["ReportBody"]),
-                Paragraph(description, styles["ReportBody"]),
-            ])
-        total_adj = env.get("total_adjustment", 0)
-        sign = "+" if total_adj >= 0 else ""
-        env_table_data.append([
-            Paragraph("<b>Total Adjustment</b>", styles["ReportBody"]),
-            Paragraph(f"<b>{sign}{total_adj}</b>", styles["ReportBody"]),
-        ])
-
-        env_table = Table(env_table_data, colWidths=[200, 270])
-        env_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
-            ("TOPPADDING", (0, 0), (-1, 0), 8),
-            ("BACKGROUND", (0, 1), (-1, -1), WHITE),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, LIGHT_GRAY]),
-            ("GRID", (0, 0), (-1, -1), 0.5, BORDER_GRAY),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 1), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
-            ("LINEABOVE", (-2, -1), (-1, -1), 1, NAVY),
-        ]))
-        elements.append(env_table)
-    else:
-        elements.append(Paragraph(
-            "Environment adjustment data not available for this company.",
-            styles["SmallGray"],
-        ))
-    elements.append(Spacer(1, 4 * mm))
+    # Environment Adjustments section removed until we have live cross-product data.
+    # GOV-1000 / REALESTATE-1000 / PORT-1000 / FRS-1000 integration is on the roadmap.
 
     # ------------------------------------------------------------------
     # Section 5: VP-1000 Vital Signs
@@ -504,14 +458,13 @@ def generate_supply_pdf(scored_data: dict, company_name: str = "", all_scores: l
     ))
     elements.append(Paragraph("DATA INTEGRITY FOOTPRINT", styles["SectionHeader"]))
     elements.append(Paragraph(
-        "Sources: USAspending.gov API, CYBER-1000 SSL/DNS Engine, "
-        "VP-1000 Vital Pulse, GOV-1000 State Fiscal Data, "
-        "REALESTATE-1000 Market Data, PORT-1000 Global Port Data",
+        "Sources: USAspending.gov API (federal contract records), "
+        "CYBER-1000 SSL/DNS Engine, VP-1000 Vital Pulse",
         styles["SmallGray"],
     ))
     elements.append(Spacer(1, 2 * mm))
     elements.append(Paragraph(
-        "Generated by SCORING PTE. LTD. (UEN: 2026132282)",
+        "Generated by SCORING PTE. LTD. (UEN: 202613228Z)",
         styles["SmallGray"],
     ))
     elements.append(Paragraph(

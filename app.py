@@ -923,28 +923,29 @@ def main():
                     )
                     with st.expander(f"Why {v1}?", expanded=False):
                         if axis == "Contract Volume":
+                            _cc_disp = '100+' if data.get('contract_count', 0) >= 100 else data.get('contract_count', 0)
                             st.markdown(f"""
-**Formula:** `(Total Value / $10B) x 100 + Count Bonus + YoY Growth Bonus`
-**Raw Data:** Value: {_fmt_dollar(data.get('total_value', 0))} | Prime: {_fmt_dollar(data.get('total_prime_value', 0))} | Sub: {_fmt_dollar(data.get('total_sub_value', 0))} | Count: {data.get('contract_count', 0)} | YoY: {data.get('yoy_change', 0):+.1%}
+**Formula:** Percentile rank of total contract value (x120) + percentile rank of contract count (x40) + YoY growth bonus (-20 to +40). Capped at 200.
+**Raw Data:** Value: {_fmt_dollar(data.get('total_value', 0))} | Contracts: {_cc_disp} | YoY: {data.get('yoy_change', 0):+.1%}
 **Source:** USAspending.gov
                             """)
                         elif axis == "Diversification":
                             st.markdown(f"""
-**Formula:** `Agency Count x 20 + Prime Count x 15 - Concentration Penalty`
-**Raw Data:** Agencies: {data.get('agency_count', 0)} | Prime contractors (as sub): {data.get('prime_contractor_count', 0)}
+**Formula:** Percentile rank of agency count (x120) + percentile rank of prime-contractor count (x80) minus a 30-point penalty if a single agency provides over 80 percent of value. Capped at 200.
+**Raw Data:** Agencies: {data.get('agency_count', 0)}
 **Source:** USAspending.gov
                             """)
                         elif axis == "Contract Continuity":
                             st.markdown(f"""
-**Formula:** `Years Active x 25 + Consecutive Year Bonus`
+**Formula:** Percentile rank of years active (x120) + consecutive-year ratio (x80). Capped at 200.
 **Raw Data:** Years active: {data.get('years_active', 0)}
 **Source:** USAspending.gov
                             """)
                         elif axis == "Network Position":
                             has_prime = data.get("total_prime_value", 0) > 0
                             st.markdown(f"""
-**Formula:** `Prime Status (100) + Sub Count x 10 + Hub Bonus`
-**Raw Data:** Sub-contractors: {data.get('sub_contractor_count', 0)} | Is prime: {'Yes' if has_prime else 'No'}
+**Formula:** Base 80 if the company is a prime contractor, 40 if sub-only. Plus percentile rank of sub-contractor network size (x80). Plus a hub bonus for primes that also manage many subs. Capped at 200.
+**Raw Data:** Is prime: {'Yes' if has_prime else 'No'}
 **Source:** USAspending.gov
                             """)
                         elif axis == "Digital Resilience":
@@ -1058,65 +1059,11 @@ Domain guess: {domain}
                     unsafe_allow_html=True,
                 )
 
-            # Layer 1: Environment Score
-            st.markdown("<div class='section-title'>ENVIRONMENT SCORE</div>", unsafe_allow_html=True)
-
-            # Get state from USAspending data (company profile should have state)
-            state_code = data.get("state_code")
-            naics_code = data.get("naics_code")
-            prime_name = data.get("prime_contractors", [None])[0] if data.get("prime_contractors") else None
-
-            env = calculate_environment_adjustment(state_code, naics_code, prime_name)
-            data = apply_environment_adjustment(data, env)
-
-            # Display as cards
-            env_cols = st.columns(4)
-            adjustments = [
-                ("GOV-1000", "State Fiscal", env["gov_adjustment"]),
-                ("REALESTATE-1000", "Real Estate", env["realestate_adjustment"]),
-                ("PORT-1000", "Port Risk", env["port_adjustment"]),
-                ("FRS-1000", "Prime Health", env["frs_adjustment"]),
-            ]
-
-            for col, (source, label, adj) in zip(env_cols, adjustments):
-                if adj > 0:
-                    color = "#10b981"
-                    prefix = "+"
-                elif adj < 0:
-                    color = "#ef4444"
-                    prefix = ""
-                else:
-                    color = "#94a3b8"
-                    prefix = ""
-
-                col.markdown(f"""
-                <div style="background:#f8fafc; border-radius:10px; padding:14px; text-align:center; border:1px solid #e2e8f0;">
-                    <div style="font-size:0.7em; color:#64748b; font-weight:600;">{source}</div>
-                    <div style="font-size:0.85em; color:#333; font-weight:600;">{label}</div>
-                    <div style="font-size:1.8em; font-weight:900; color:{color};">{prefix}{adj}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            # Total environment adjustment
-            total_adj = env["total_adjustment"]
-            if total_adj > 0:
-                adj_color = "#10b981"
-            elif total_adj < 0:
-                adj_color = "#ef4444"
-            else:
-                adj_color = "#94a3b8"
-
-            st.markdown(f"""
-            <div style="text-align:center; margin:10px 0;">
-                <span style="font-size:0.9em; color:#64748b;">Total Environment Adjustment: </span>
-                <span style="font-size:1.2em; font-weight:900; color:{adj_color};">{'+' if total_adj >= 0 else ''}{total_adj} points</span>
-            </div>
-            """, unsafe_allow_html=True)
-
-            if state_code:
-                st.caption(f"State: {state_code} | NAICS: {naics_code or 'N/A'} | Prime: {prime_name or 'N/A'}")
-            else:
-                st.caption("State data not available from USAspending. Environment adjustments default to 0.")
+            # Layer 1 environment cards hidden until we have live cross-product data
+            # GOV-1000 / REALESTATE-1000 / PORT-1000 / FRS-1000 integration is on the
+            # roadmap. For now, the score is the 5-axis base only.
+            # State chip also hidden because state_code from USAspending reflects
+            # place of performance, not company HQ.
 
             # Key metrics
             st.markdown("<div class='section-title'>KEY METRICS</div>", unsafe_allow_html=True)
@@ -1493,7 +1440,7 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
                     st.download_button(
                         label="Download CSV (Salesforce-ready)",
                         data=csv_bytes,
-                        file_name="SBA_Target_Risk_Scores_by_Scoring.csv",
+                        file_name="SUPPLY1000_Batch_Scores.csv",
                         mime="text/csv",
                     )
 
