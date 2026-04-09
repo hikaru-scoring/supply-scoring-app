@@ -87,7 +87,7 @@ def main():
 
     # Score top companies (base 5-axis scores)
     print("  Scoring top companies (base 5-axis)...")
-    scored = score_all_top_companies(year=2025, limit=50)
+    scored = score_all_top_companies(year=None, limit=50)
 
     if not scored or len(scored) < 5:
         print(f"ERROR: Only {len(scored) if scored else 0} companies scored, skipping save")

@@ -4,7 +4,19 @@ import re
 import socket
 import ssl
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+
+
+def _ttm_window():
+    """Return (start_date_iso, end_date_iso) for the trailing 12 months."""
+    end = date.today()
+    start = end - timedelta(days=365)
+    return start.isoformat(), end.isoformat()
+
+
+def _year_window(year: int):
+    """Return (start, end) for a single calendar year (used for historical lookbacks)."""
+    return f"{year}-01-01", f"{year}-12-31"
 
 try:
     import streamlit as st
@@ -123,13 +135,19 @@ def _safe_post(url: str, payload: dict, retries: int = 2, delay: float = 1.0):
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def search_prime_awards(agency_name=None, recipient_name=None, year=2025, limit=100):
-    """Search prime contract awards from USAspending.gov."""
+def search_prime_awards(agency_name=None, recipient_name=None, year=None, limit=100):
+    """Search prime contract awards from USAspending.gov.
+
+    If `year` is None, uses the trailing 12 months window (default).
+    Otherwise, queries that specific calendar year (used for historical lookbacks).
+    """
+    if year is None:
+        start, end = _ttm_window()
+    else:
+        start, end = _year_window(year)
     filters = {
         "award_type_codes": ["A", "B", "C", "D"],
-        "time_period": [
-            {"start_date": f"{year}-01-01", "end_date": f"{year}-12-31"}
-        ],
+        "time_period": [{"start_date": start, "end_date": end}],
     }
     if agency_name:
         filters["agencies"] = [
@@ -161,13 +179,18 @@ def search_prime_awards(agency_name=None, recipient_name=None, year=2025, limit=
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def search_sub_awards(agency_name=None, prime_recipient=None, year=2025, limit=100):
-    """Search sub-contract awards from USAspending.gov."""
+def search_sub_awards(agency_name=None, prime_recipient=None, year=None, limit=100):
+    """Search sub-contract awards from USAspending.gov.
+
+    If `year` is None, uses the trailing 12 months window.
+    """
+    if year is None:
+        start, end = _ttm_window()
+    else:
+        start, end = _year_window(year)
     filters = {
         "award_type_codes": ["A", "B", "C", "D"],
-        "time_period": [
-            {"start_date": f"{year}-01-01", "end_date": f"{year}-12-31"}
-        ],
+        "time_period": [{"start_date": start, "end_date": end}],
     }
     if agency_name:
         filters["agencies"] = [
@@ -199,14 +222,19 @@ def search_sub_awards(agency_name=None, prime_recipient=None, year=2025, limit=1
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_top_recipients(year=2025, limit=50):
-    """Get top recipients by contract spending."""
+def get_top_recipients(year=None, limit=50):
+    """Get top recipients by contract spending.
+
+    If `year` is None, uses the trailing 12 months window.
+    """
+    if year is None:
+        start, end = _ttm_window()
+    else:
+        start, end = _year_window(year)
     payload = {
         "filters": {
             "award_type_codes": ["A", "B", "C", "D"],
-            "time_period": [
-                {"start_date": f"{year}-01-01", "end_date": f"{year}-12-31"}
-            ],
+            "time_period": [{"start_date": start, "end_date": end}],
         },
         "category": "recipient",
         "limit": limit,
@@ -243,12 +271,11 @@ def _enrich_profile_location(profile):
     name = profile.get("name", "")
     if not name:
         return
+    _ttm_start, _ttm_end = _ttm_window()
     payload = {
         "filters": {
             "award_type_codes": ["A", "B", "C", "D"],
-            "time_period": [
-                {"start_date": "2025-01-01", "end_date": "2025-12-31"}
-            ],
+            "time_period": [{"start_date": _ttm_start, "end_date": _ttm_end}],
             "recipient_search_text": [name],
         },
         "fields": [
@@ -409,15 +436,15 @@ def get_company_profile(company_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_top_company_profiles(year=2025, limit=50) -> list[dict]:
+def get_top_company_profiles(year=None, limit=50) -> list[dict]:
     """Get profiles for the top recipients by contract value.
 
-    This is the main entry point for Dashboard / Rankings.
-    Returns a list of scored company dicts.
+    Uses trailing 12-month window for the current snapshot, plus 4 prior
+    calendar years for continuity / growth analysis.
     """
     # Fetch more than needed to have enough after deduplication
     raw_limit = min(limit + 30, 100)
-    top = get_top_recipients(year=year, limit=raw_limit)
+    top = get_top_recipients(year=None, limit=raw_limit)  # TTM window
     if not top:
         return []
 
@@ -427,14 +454,19 @@ def get_top_company_profiles(year=2025, limit=50) -> list[dict]:
     # Trim to requested limit after deduplication
     top = top[:limit]
 
+    # For continuity analysis: 4 prior calendar years before today
+    today = date.today()
+    current_year = today.year
+    history_years = list(range(current_year - 4, current_year))
+
     profiles = []
     for entry in top:
         name = entry.get("name")
         amount = entry.get("amount") or 0
         if not name or name.upper() == "REDACTED DUE TO PII":
             continue
-        # Build a lightweight profile from the top-recipients data
-        # plus a targeted sub-award lookup
+        # TTM is the "current" bucket; we mark it with the current calendar year
+        ttm_label = current_year
         profile = {
             "name": name,
             "total_prime_value": float(amount),
@@ -442,16 +474,16 @@ def get_top_company_profiles(year=2025, limit=50) -> list[dict]:
             "agencies": [],
             "prime_contractors": [],
             "sub_contractors": [],
-            "yearly_values": {year: float(amount)},
+            "yearly_values": {ttm_label: float(amount)},
             "contract_count": 0,
             "sub_count": 0,
-            "years_active": [year],
+            "years_active": [ttm_label],
             "state_code": None,
             "naics_code": None,
         }
 
-        # Prime award lookup for agency info and contract count (raised limit)
-        primes = search_prime_awards(recipient_name=name, year=year, limit=100)
+        # Prime award lookup for agency info and contract count (TTM window)
+        primes = search_prime_awards(recipient_name=name, year=None, limit=100)
         agencies_set = set()
         count = 0
         for award in primes:
@@ -464,8 +496,8 @@ def get_top_company_profiles(year=2025, limit=50) -> list[dict]:
         profile["agencies"] = list(agencies_set)
         profile["contract_count"] = max(count, 1)
 
-        # Sub-award lookup (raised limit to capture larger networks)
-        subs = search_sub_awards(prime_recipient=name, year=year, limit=100)
+        # Sub-award lookup (TTM window)
+        subs = search_sub_awards(prime_recipient=name, year=None, limit=100)
         sub_names = set()
         for sub in subs:
             sub_name = sub.get("Sub-Awardee Name")
@@ -473,8 +505,7 @@ def get_top_company_profiles(year=2025, limit=50) -> list[dict]:
                 sub_names.add(sub_name)
         profile["sub_contractors"] = list(sub_names)
 
-        # Multi-year history (last 5 years) for proper Years Active and growth
-        history_years = list(range(year - 4, year))  # year-4 to year-1
+        # Historical lookback for continuity / growth (calendar years)
         for hy in history_years:
             hy_top = get_top_recipients(year=hy, limit=raw_limit)
             hy_deduped = _deduplicate_recipients(hy_top or [])
@@ -505,7 +536,7 @@ def get_top_company_profiles(year=2025, limit=50) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_supply_chain_network(company_name: str, year=2025) -> dict:
+def get_supply_chain_network(company_name: str, year=None) -> dict:
     """Get the supply chain network for a company.
 
     Returns dict with:
@@ -987,7 +1018,7 @@ def apply_vital_pulse_modifier(scored_data, vital_result):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def score_all_top_companies(year=2025, limit=50) -> list[dict]:
+def score_all_top_companies(year=None, limit=50) -> list[dict]:
     """Fetch top recipients, build profiles, score them all.
 
     Returns sorted list of scored company dicts (highest first).
