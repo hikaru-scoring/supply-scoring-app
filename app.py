@@ -1373,6 +1373,36 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
             unsafe_allow_html=True,
         )
 
+        # Backtest report download
+        backtest_pdf_path = os.path.join(
+            os.path.dirname(__file__),
+            "backtest_results",
+            "SUPPLY-1000_Backtest_Report.pdf",
+        )
+        if os.path.exists(backtest_pdf_path):
+            with open(backtest_pdf_path, "rb") as _f:
+                _pdf_bytes = _f.read()
+            st.markdown(
+                "<div style='background:#eff6ff; border-left:4px solid #2E7BE6; "
+                "padding:14px 18px; border-radius:6px; margin-bottom:18px;'>"
+                "<div style='font-size:14px; font-weight:700; color:#1e293b; margin-bottom:4px;'>"
+                "Backtest Report Available</div>"
+                "<div style='font-size:12px; color:#64748b;'>"
+                "We backtested 1,000 government contractors across FY2015 and FY2018. "
+                "Low-scoring companies (below 400) had a 27 to 35 percent chance of losing "
+                "contracts within 3 years. Download the full report below.</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            st.download_button(
+                label="Download Backtest Report (PDF)",
+                data=_pdf_bytes,
+                file_name="SUPPLY-1000_Backtest_Report.pdf",
+                mime="application/pdf",
+                key="backtest_pdf_dl",
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+
         batch_input = st.text_area(
             "Enter company names (one per line)",
             height=200,
