@@ -753,11 +753,13 @@ def main():
                         cyber_score, cyber_detail = _scan_domain_quick(domain)
                     data["domain"] = domain
                     data["digital_score_detail"] = cyber_detail
-                    # Replace cyber axis without stripping VP/env adjustments
-                    old_cyber = data["axes"].get("Digital Resilience", 0)
-                    data["axes"]["Digital Resilience"] = cyber_score
-                    # Adjust total by the cyber delta only, preserving VP/env baked into cached total
-                    data["total"] = max(0, min(1000, data.get("total", 0) + (cyber_score - old_cyber)))
+                    # Replace cyber axis, preserving VP modifier so it stays consistent
+                    # with the rest of the cached axes (which are also VP-scaled).
+                    modifier = data.get("vital_modifier", 1.0) or 1.0
+                    scaled_cyber = max(0, min(200, round(cyber_score * modifier)))
+                    data["axes"]["Digital Resilience"] = scaled_cyber
+                    # Recompute total from axes so radar matches the big number
+                    data["total"] = max(0, min(1000, sum(data["axes"].values())))
             else:
                 with st.spinner(f"Building profile for {selected_name}..."):
                     profile = get_company_profile(selected_name)

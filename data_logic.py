@@ -961,14 +961,22 @@ def score_company(profile: dict, all_profiles: list[dict]) -> dict:
 
 def apply_environment_adjustment(scored_data, env_result):
     """Apply Layer 1 environment adjustments to scored data.
-    Adjusts total score based on GOV, REALESTATE, PORT, FRS scores.
+    Distributes the adjustment proportionally across all axes so that
+    sum(axes) == total (keeps radar chart consistent with displayed total).
     """
     if not env_result:
         scored_data["env_adjustment"] = 0
         return scored_data
 
     adj = env_result["total_adjustment"]
-    scored_data["total"] = _clamp(scored_data["total"] + adj, 0, 1000)
+    old_total = scored_data["total"]
+    if old_total > 0 and adj != 0:
+        scale = (old_total + adj) / old_total
+        for k in scored_data["axes"]:
+            scored_data["axes"][k] = max(0, min(200, round(scored_data["axes"][k] * scale)))
+        scored_data["total"] = sum(scored_data["axes"].values())
+    else:
+        scored_data["total"] = _clamp(scored_data["total"] + adj, 0, 1000)
     scored_data["environment"] = env_result
     scored_data["env_adjustment"] = adj
 
@@ -998,17 +1006,18 @@ def apply_vital_pulse_modifier(scored_data, vital_result):
     else:
         modifier = 0.8
 
-    # Apply modifier to total (cap at 1000)
+    # Apply modifier to each axis so radar stays consistent with total
     old_total = scored_data["total"]
-    new_total = min(int(old_total * modifier), 1000)
+    for k in scored_data["axes"]:
+        scored_data["axes"][k] = max(0, min(200, round(scored_data["axes"][k] * modifier)))
 
     # Hiring bonus to Contract Volume
     if vital_result.get("careers", {}).get("has_careers"):
         scored_data["axes"]["Contract Volume"] = min(
             scored_data["axes"]["Contract Volume"] + 10, 200
         )
-        new_total = min(new_total + 10, 1000)
 
+    new_total = min(sum(scored_data["axes"].values()), 1000)
     scored_data["total"] = new_total
     scored_data["vital_pulse"] = vital_result
     scored_data["vital_modifier"] = modifier
