@@ -942,44 +942,41 @@ def main():
                     with st.expander(f"Why {v1}?", expanded=False):
                         if axis == "Contract Volume":
                             _cc_disp = '1000+' if data.get('contract_count', 0) >= 1000 else data.get('contract_count', 0)
-                            st.markdown(f"""
-**Formula:** Percentile rank of total contract value (x120) + percentile rank of contract count (x40) + YoY growth bonus (-20 to +40). Capped at 200.
-**Raw Data:** Value: {_fmt_dollar(data.get('total_value', 0))} | Contracts: {_cc_disp} | YoY: {data.get('yoy_change', 0):+.1%}
-**Source:** USAspending.gov
-                            """)
+                            st.markdown(
+                                f"**Formula:** contract value + contract count + YoY growth, percentile-ranked.  \n"
+                                f"**Data:** {_fmt_dollar(data.get('total_value', 0))} | {_cc_disp} contracts | YoY {data.get('yoy_change', 0):+.1%}  \n"
+                                f"**Source:** USAspending.gov"
+                            )
                         elif axis == "Diversification":
-                            st.markdown(f"""
-**Formula:** Percentile rank of agency count (x120) + percentile rank of prime-contractor count (x80) minus a 30-point single-source penalty if the company has only one agency client. Capped at 200.
-**Raw Data:** Agencies: {data.get('agency_count', 0)}
-**Source:** USAspending.gov
-                            """)
+                            st.markdown(
+                                f"**Formula:** agency count + prime count, percentile-ranked. -30 penalty if only one agency.  \n"
+                                f"**Data:** {data.get('agency_count', 0)} agencies  \n"
+                                f"**Source:** USAspending.gov"
+                            )
                         elif axis == "Contract Continuity":
-                            st.markdown(f"""
-**Formula:** Percentile rank of years active (x120) + consecutive-year ratio (x80). Capped at 200.
-**Raw Data:** Years active: {data.get('years_active', 0)}
-**Source:** USAspending.gov
-                            """)
+                            st.markdown(
+                                f"**Formula:** years active + consecutive-year ratio, percentile-ranked.  \n"
+                                f"**Data:** {data.get('years_active', 0)} years active  \n"
+                                f"**Source:** USAspending.gov"
+                            )
                         elif axis == "Network Position":
                             has_prime = data.get("total_prime_value", 0) > 0
-                            st.markdown(f"""
-**Formula:** Base 60 if the company is a prime contractor, 30 if sub-only. Plus percentile rank of total contract value (x100) as a network footprint proxy (a larger contract base implies a larger sub-contractor network). Plus a continuity bonus (up to 40) for companies active across all 5 prior calendar years. Capped at 200.
-**Raw Data:** Is prime: {'Yes' if has_prime else 'No'} | Total value: {_fmt_dollar(data.get('total_value', 0))} | Years active: {data.get('years_active', 0)}
-**Source:** USAspending.gov
-                            """)
+                            st.markdown(
+                                f"**Formula:** prime/sub base + contract-scale percentile + multi-year bonus.  \n"
+                                f"**Data:** {'Prime' if has_prime else 'Sub'} | {_fmt_dollar(data.get('total_value', 0))} | {data.get('years_active', 0)} years  \n"
+                                f"**Source:** USAspending.gov"
+                            )
                         elif axis == "Digital Resilience":
                             domain = data.get("domain", "N/A")
                             detail = data.get("digital_score_detail")
                             if detail:
-                                st.markdown(f"""
-**Formula:** `SSL Health (50%) + Email Security (50%)`
-**Raw Data:** Domain: {domain} | SSL: {detail.get('ssl', 'N/A')}/200 | Email: {detail.get('email', 'N/A')}/200
-**Source:** Direct SSL/DNS scan of company domain
-                                """)
+                                st.markdown(
+                                    f"**Formula:** SSL health + email security (SPF/DMARC/DKIM).  \n"
+                                    f"**Data:** {domain} | SSL {detail.get('ssl', 'N/A')}/200 | Email {detail.get('email', 'N/A')}/200  \n"
+                                    f"**Source:** Direct SSL and DNS scan"
+                                )
                             else:
-                                st.markdown(f"""
-**No domain scanned for this company.**
-Domain guess: {domain}
-                                """)
+                                st.markdown(f"No domain scanned. Guess: {domain}")
 
             # Claim this business (domain override)
             domain = data.get("domain")
