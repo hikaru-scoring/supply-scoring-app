@@ -479,7 +479,7 @@ def generate_csv(data: dict) -> bytes:
     rows.append({"Axis": "TOTAL", "Score": int(data.get("total", 0)), "Description": ""})
     rows.append({"Axis": "", "Score": "", "Description": ""})
     _csv_cc = data.get("contract_count", 0)
-    _csv_cc_display = "1000+" if _csv_cc >= 1000 else _csv_cc
+    _csv_cc_display = "200+" if _csv_cc >= 200 else _csv_cc
     rows.append({"Axis": "Total Contract Value", "Score": _fmt_dollar(data.get("total_value", 0)), "Description": ""})
     rows.append({"Axis": "Agencies", "Score": data.get("agency_count", 0), "Description": ""})
     rows.append({"Axis": "Contracts (last 12 months)", "Score": _csv_cc_display, "Description": ""})
@@ -941,7 +941,7 @@ def main():
                     )
                     with st.expander(f"Why {v1}?", expanded=False):
                         if axis == "Contract Volume":
-                            _cc_disp = '1000+' if data.get('contract_count', 0) >= 1000 else data.get('contract_count', 0)
+                            _cc_disp = '200+' if data.get('contract_count', 0) >= 200 else data.get('contract_count', 0)
                             st.markdown(
                                 f"**Formula:** contract value + contract count + YoY growth, percentile-ranked.  \n"
                                 f"**Data:** {_fmt_dollar(data.get('total_value', 0))} | {_cc_disp} contracts | YoY {data.get('yoy_change', 0):+.1%}  \n"
@@ -1092,7 +1092,7 @@ def main():
                 st.metric("Agencies", data.get("agency_count", 0))
             with m3:
                 _cc = data.get("contract_count", 0)
-                st.metric("Contracts", "1000+" if _cc >= 1000 else _cc)
+                st.metric("Contracts", "200+" if _cc >= 200 else _cc)
             with m4:
                 st.metric("Years Active", data.get("years_active", 0))
 
@@ -1298,7 +1298,7 @@ def main():
                     f"<div style='display:flex; gap:20px; font-size:12px; color:#64748b; margin-bottom:10px;'>"
                     f"<span>Value: {_fmt_dollar(s.get('total_value', 0))}</span>"
                     f"<span>Agencies: {s.get('agency_count', 0)}</span>"
-                    f"<span>Contracts: {('1000+' if s.get('contract_count', 0) >= 1000 else s.get('contract_count', 0))}</span>"
+                    f"<span>Contracts: {('200+' if s.get('contract_count', 0) >= 200 else s.get('contract_count', 0))}</span>"
                     f"<span>YoY: {s.get('yoy_change', 0):+.1%}</span>"
                     f"</div>"
                     f"{axis_bars}"

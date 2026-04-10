@@ -138,6 +138,8 @@ def _safe_post(url: str, payload: dict, retries: int = 2, delay: float = 1.0):
 def search_prime_awards(agency_name=None, recipient_name=None, year=None, limit=100):
     """Search prime contract awards from USAspending.gov.
 
+    USAspending caps page size at 100, so we paginate when limit > 100.
+
     If `year` is None, uses the trailing 12 months window (default).
     Otherwise, queries that specific calendar year (used for historical lookbacks).
     """
@@ -156,22 +158,30 @@ def search_prime_awards(agency_name=None, recipient_name=None, year=None, limit=
     if recipient_name:
         filters["recipient_search_text"] = [recipient_name]
 
-    payload = {
-        "filters": filters,
-        "fields": [
-            "Award ID", "Recipient Name", "Award Amount",
-            "Awarding Agency", "Start Date", "End Date", "Description",
-        ],
-        "limit": limit,
-        "page": 1,
-        "subawards": False,
-        "order": "desc",
-        "sort": "Award Amount",
-    }
-    data = _safe_post(f"{BASE_URL}/search/spending_by_award/", payload)
-    if data:
-        return data.get("results", [])
-    return []
+    page_size = 100
+    pages_needed = max(1, (limit + page_size - 1) // page_size)
+    all_results: list = []
+    for page in range(1, pages_needed + 1):
+        payload = {
+            "filters": filters,
+            "fields": [
+                "Award ID", "Recipient Name", "Award Amount",
+                "Awarding Agency", "Start Date", "End Date", "Description",
+            ],
+            "limit": page_size,
+            "page": page,
+            "subawards": False,
+            "order": "desc",
+            "sort": "Award Amount",
+        }
+        data = _safe_post(f"{BASE_URL}/search/spending_by_award/", payload)
+        results = data.get("results", []) if data else []
+        if not results:
+            break
+        all_results.extend(results)
+        if len(results) < page_size:
+            break  # no more pages
+    return all_results[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +191,8 @@ def search_prime_awards(agency_name=None, recipient_name=None, year=None, limit=
 @st.cache_data(ttl=86400, show_spinner=False)
 def search_sub_awards(agency_name=None, prime_recipient=None, year=None, limit=100):
     """Search sub-contract awards from USAspending.gov.
+
+    USAspending caps page size at 100, so we paginate when limit > 100.
 
     If `year` is None, uses the trailing 12 months window.
     """
@@ -199,22 +211,30 @@ def search_sub_awards(agency_name=None, prime_recipient=None, year=None, limit=1
     if prime_recipient:
         filters["recipient_search_text"] = [prime_recipient]
 
-    payload = {
-        "filters": filters,
-        "fields": [
-            "Sub-Award ID", "Sub-Awardee Name", "Sub-Award Amount",
-            "Prime Award ID", "Prime Recipient Name",
-        ],
-        "limit": limit,
-        "page": 1,
-        "subawards": True,
-        "order": "desc",
-        "sort": "Sub-Award Amount",
-    }
-    data = _safe_post(f"{BASE_URL}/search/spending_by_award/", payload)
-    if data:
-        return data.get("results", [])
-    return []
+    page_size = 100
+    pages_needed = max(1, (limit + page_size - 1) // page_size)
+    all_results: list = []
+    for page in range(1, pages_needed + 1):
+        payload = {
+            "filters": filters,
+            "fields": [
+                "Sub-Award ID", "Sub-Awardee Name", "Sub-Award Amount",
+                "Prime Award ID", "Prime Recipient Name",
+            ],
+            "limit": page_size,
+            "page": page,
+            "subawards": True,
+            "order": "desc",
+            "sort": "Sub-Award Amount",
+        }
+        data = _safe_post(f"{BASE_URL}/search/spending_by_award/", payload)
+        results = data.get("results", []) if data else []
+        if not results:
+            break
+        all_results.extend(results)
+        if len(results) < page_size:
+            break
+    return all_results[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -482,8 +502,10 @@ def get_top_company_profiles(year=None, limit=50) -> list[dict]:
             "naics_code": None,
         }
 
-        # Prime award lookup for agency info and contract count (TTM window)
-        primes = search_prime_awards(recipient_name=name, year=None, limit=1000)
+        # Prime award lookup for agency info and contract count (TTM window).
+        # 200 is plenty: top primes have all their agencies in their largest
+        # awards, and 200+ display reads as "many" without forcing a 100s wait.
+        primes = search_prime_awards(recipient_name=name, year=None, limit=200)
         agencies_set = set()
         count = 0
         for award in primes:
@@ -496,14 +518,10 @@ def get_top_company_profiles(year=None, limit=50) -> list[dict]:
         profile["agencies"] = list(agencies_set)
         profile["contract_count"] = max(count, 1)
 
-        # Sub-award lookup (TTM window)
-        subs = search_sub_awards(prime_recipient=name, year=None, limit=1000)
-        sub_names = set()
-        for sub in subs:
-            sub_name = sub.get("Sub-Awardee Name")
-            if sub_name:
-                sub_names.add(sub_name)
-        profile["sub_contractors"] = list(sub_names)
+        # Sub-award lookup intentionally skipped: USAspending sub-award search
+        # filters by sub-awardee, not by prime, so the result is unreliable for
+        # mapping a prime's sub-contractor network. Display surfaces (CSV) show 0.
+        profile["sub_contractors"] = []
 
         # Historical lookback for continuity / growth (calendar years)
         for hy in history_years:

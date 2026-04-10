@@ -432,7 +432,7 @@ def generate_supply_pdf(scored_data: dict, company_name: str = "", all_scores: l
     years_active = scored_data.get("years_active", 0)
     domain = scored_data.get("domain", "N/A")
 
-    cc_display = "1000+" if (contract_count or 0) >= 1000 else str(_safe(contract_count, "0"))
+    cc_display = "200+" if (contract_count or 0) >= 200 else str(_safe(contract_count, "0"))
     metrics_data = [
         ["Total Contract Value", _fmt_dollar(total_value)],
         ["Number of Agencies", str(_safe(agency_count, "0"))],
