@@ -848,17 +848,16 @@ def main():
                     elif _delta < 0:
                         _delta_html = f'<span style="font-size:24px; font-weight:700; color:#ef4444; margin-left:12px;">{_delta}</span><span style="font-size:14px; color:#94a3b8; margin-left:4px;">({_prev})</span>'
 
-            st.markdown(f"""
-            <div style="text-align:center; margin-top:4px; margin-bottom:10px;">
-                <div style="font-size:14px; letter-spacing:2px; color:#666;">TOTAL SCORE</div>
-                <div style="font-size:90px; font-weight:800; color:#2E7BE6; line-height:1;">
-                    {display_total}
-                    <span style="font-size:35px; color:#BBB;">/ 1000</span>
-                    {_delta_html}
-                </div>
-                <!-- axis breakdown available in radar chart below -->
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="text-align:center; margin-top:4px; margin-bottom:10px;">'
+                f'<div style="font-size:14px; letter-spacing:2px; color:#666;">TOTAL SCORE</div>'
+                f'<div style="font-size:90px; font-weight:800; color:#2E7BE6; line-height:1;">'
+                f'{display_total}'
+                f'<span style="font-size:35px; color:#BBB;">/ 1000</span>'
+                f'{_delta_html}'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
 
             # 3-Year Risk Indicator (based on backtest of 1,000 companies)
             _risk_bands = [
