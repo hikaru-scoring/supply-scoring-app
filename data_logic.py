@@ -38,8 +38,8 @@ AXES_LABELS = [
 
 BASE_URL = "https://api.usaspending.gov/api/v2"
 
-# Years to analyze for continuity and growth
-ANALYSIS_YEARS = list(range(2020, 2026))
+# Years to analyze for continuity and growth (5 prior calendar years)
+ANALYSIS_YEARS = list(range(2021, 2026))
 
 # Suffixes to strip when normalizing company names for deduplication
 _COMPANY_SUFFIXES = re.compile(
@@ -483,7 +483,7 @@ def get_top_company_profiles(year=None, limit=50) -> list[dict]:
         }
 
         # Prime award lookup for agency info and contract count (TTM window)
-        primes = search_prime_awards(recipient_name=name, year=None, limit=100)
+        primes = search_prime_awards(recipient_name=name, year=None, limit=1000)
         agencies_set = set()
         count = 0
         for award in primes:
@@ -497,7 +497,7 @@ def get_top_company_profiles(year=None, limit=50) -> list[dict]:
         profile["contract_count"] = max(count, 1)
 
         # Sub-award lookup (TTM window)
-        subs = search_sub_awards(prime_recipient=name, year=None, limit=100)
+        subs = search_sub_awards(prime_recipient=name, year=None, limit=1000)
         sub_names = set()
         for sub in subs:
             sub_name = sub.get("Sub-Awardee Name")
@@ -1030,6 +1030,9 @@ def apply_vital_pulse_modifier(scored_data, vital_result):
 def score_all_top_companies(year=None, limit=50) -> list[dict]:
     """Fetch top recipients, build profiles, score them all.
 
+    Each profile is scanned for live cyber data so the Digital Resilience
+    axis reflects real SSL/DNS posture rather than a proportional estimate.
+
     Returns sorted list of scored company dicts (highest first).
     """
     profiles = get_top_company_profiles(year=year, limit=limit)
@@ -1038,6 +1041,7 @@ def score_all_top_companies(year=None, limit=50) -> list[dict]:
 
     scored = []
     for p in profiles:
+        p["_run_cyber_scan"] = True
         result = score_company(p, profiles)
         scored.append(result)
 

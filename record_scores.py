@@ -137,6 +137,19 @@ def main():
         "companies": [],
     }
     for s in scored:
+        # Save the full vital_pulse dict so the Detail view and PDF can render
+        # signals, response time, and careers info without re-fetching.
+        vp_full = s.get("vital_pulse") or {}
+        vital_pulse_min = {
+            "vital_score": vp_full.get("vital_score", 0),
+            "signals": vp_full.get("signals", []),
+            "domain": vp_full.get("domain"),
+            "alive": vp_full.get("alive") or {"alive": False, "response_time_ms": 0},
+            "careers": vp_full.get("careers") or {"has_careers": False, "careers_url": None},
+            "freshness": vp_full.get("freshness") or {},
+            "ssl": vp_full.get("ssl") or {},
+            "robots": vp_full.get("robots") or {},
+        }
         company_cache = {
             "name": s["name"],
             "total": s["total"],
@@ -158,6 +171,8 @@ def main():
             "env_adjustment": s.get("env_adjustment", 0),
             "vp_adjustment": s.get("vp_adjustment", 0),
             "vital_modifier": s.get("vital_modifier", 1.0),
+            "vital_pulse": vital_pulse_min,
+            "digital_score_detail": s.get("digital_score_detail"),
         }
         cache_data["companies"].append(company_cache)
 

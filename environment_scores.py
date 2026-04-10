@@ -185,7 +185,12 @@ def get_frs_adjustment(prime_contractor_name):
 def calculate_environment_adjustment(state_code, naics_code=None, prime_contractor_name=None):
     """Calculate total environment adjustment from all Layer 1 sources.
     Returns dict with individual adjustments, scores, and detailed descriptions.
+
+    NOTE: Layer 1 (cross-product GOV/REALESTATE/PORT/FRS adjustments) is on the
+    roadmap but not yet wired to live data sources, so we return zeros to keep
+    every score grounded in the 5-axis base only.
     """
+    return None
     gov_adj, gov_score, gov_state = get_gov_adjustment(state_code)
     re_adj, re_score, re_state = get_realestate_adjustment(state_code)
     port_adj, port_score, port_name = get_port_adjustment(state_code, naics_code)

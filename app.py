@@ -478,9 +478,11 @@ def generate_csv(data: dict) -> bytes:
         rows.append({"Axis": k, "Score": int(data["axes"].get(k, 0)), "Description": desc})
     rows.append({"Axis": "TOTAL", "Score": int(data.get("total", 0)), "Description": ""})
     rows.append({"Axis": "", "Score": "", "Description": ""})
+    _csv_cc = data.get("contract_count", 0)
+    _csv_cc_display = "1000+" if _csv_cc >= 1000 else _csv_cc
     rows.append({"Axis": "Total Contract Value", "Score": _fmt_dollar(data.get("total_value", 0)), "Description": ""})
     rows.append({"Axis": "Agencies", "Score": data.get("agency_count", 0), "Description": ""})
-    rows.append({"Axis": "Sub-contractors", "Score": data.get("sub_contractor_count", 0), "Description": ""})
+    rows.append({"Axis": "Contracts (last 12 months)", "Score": _csv_cc_display, "Description": ""})
     rows.append({"Axis": "Years Active", "Score": data.get("years_active", 0), "Description": ""})
     return pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
 
@@ -528,7 +530,7 @@ def main():
             "<div style='font-size:1.5em; font-weight:900; color:#1e3a8a; margin-bottom:5px;'>"
             "Supply Chain Dashboard</div>"
             "<p style='color:#64748b; margin-bottom:20px;'>"
-            "Real-time supply chain health scores for top US government contractors, "
+            "Daily-updated supply chain health scores for top US government contractors, "
             "powered by USAspending.gov data.</p>",
             unsafe_allow_html=True,
         )
@@ -775,6 +777,31 @@ def main():
                     else:
                         data = score_company(profile, [profile])
 
+            # Pre-run VP-1000 + environment adjustment so the PDF download
+            # includes vital signs and the same total a cached company would have.
+            # Without this the first PDF would say "Vital pulse data not available"
+            # and a fresh search would lack VP/env that cached top-50 companies have.
+            if "vital_pulse" not in data:
+                _vp_domain = data.get("domain")
+                if _vp_domain:
+                    try:
+                        _vital = run_vital_pulse(_vp_domain)
+                        data["vital_pulse"] = _vital
+                        if data.get("vital_modifier") is None:
+                            data = apply_vital_pulse_modifier(data, _vital)
+                    except Exception:
+                        pass
+            if data.get("env_adjustment") is None:
+                try:
+                    _env = calculate_environment_adjustment(
+                        data.get("state_code"),
+                        data.get("naics_code"),
+                        data.get("prime_contractors", [None])[0] if data.get("prime_contractors") else None,
+                    )
+                    data = apply_environment_adjustment(data, _env)
+                except Exception:
+                    pass
+
             # Save/Clear + PDF/CSV buttons
             col_btn1, col_btn2, col_btn3, col_btn4, col_btn_rest = st.columns([1, 1, 1.5, 1.5, 5.5])
 
@@ -862,7 +889,7 @@ def main():
                     3-Year Risk: {_risk_pct:.1f}% negative outcome ({_risk_label})
                 </span>
                 <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
-                    Based on backtest of 1,000 government contractors (FY2015 + FY2018)
+                    Based on historical backtest of 1,000 government contractors (2015 and 2018 cohorts)
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -915,7 +942,7 @@ def main():
                     )
                     with st.expander(f"Why {v1}?", expanded=False):
                         if axis == "Contract Volume":
-                            _cc_disp = '100+' if data.get('contract_count', 0) >= 100 else data.get('contract_count', 0)
+                            _cc_disp = '1000+' if data.get('contract_count', 0) >= 1000 else data.get('contract_count', 0)
                             st.markdown(f"""
 **Formula:** Percentile rank of total contract value (x120) + percentile rank of contract count (x40) + YoY growth bonus (-20 to +40). Capped at 200.
 **Raw Data:** Value: {_fmt_dollar(data.get('total_value', 0))} | Contracts: {_cc_disp} | YoY: {data.get('yoy_change', 0):+.1%}
@@ -923,7 +950,7 @@ def main():
                             """)
                         elif axis == "Diversification":
                             st.markdown(f"""
-**Formula:** Percentile rank of agency count (x120) + percentile rank of prime-contractor count (x80) minus a 30-point penalty if a single agency provides over 80 percent of value. Capped at 200.
+**Formula:** Percentile rank of agency count (x120) + percentile rank of prime-contractor count (x80) minus a 30-point single-source penalty if the company has only one agency client. Capped at 200.
 **Raw Data:** Agencies: {data.get('agency_count', 0)}
 **Source:** USAspending.gov
                             """)
@@ -936,8 +963,8 @@ def main():
                         elif axis == "Network Position":
                             has_prime = data.get("total_prime_value", 0) > 0
                             st.markdown(f"""
-**Formula:** Base 60 if the company is a prime contractor, 30 if sub-only. Plus percentile rank of total contract value (x100) as a network footprint proxy. Plus a continuity bonus (up to 40) for companies active across all 5 years. Capped at 200.
-**Raw Data:** Is prime: {'Yes' if has_prime else 'No'} | Years active: {data.get('years_active', 0)}
+**Formula:** Base 60 if the company is a prime contractor, 30 if sub-only. Plus percentile rank of total contract value (x100) as a network footprint proxy (a larger contract base implies a larger sub-contractor network). Plus a continuity bonus (up to 40) for companies active across all 5 prior calendar years. Capped at 200.
+**Raw Data:** Is prime: {'Yes' if has_prime else 'No'} | Total value: {_fmt_dollar(data.get('total_value', 0))} | Years active: {data.get('years_active', 0)}
 **Source:** USAspending.gov
                             """)
                         elif axis == "Digital Resilience":
@@ -952,8 +979,6 @@ def main():
                             else:
                                 st.markdown(f"""
 **No domain scanned for this company.**
-Companies without a scanned domain show a proportionally estimated Digital Resilience score.
-To get a real score, view the company in Company Detail (triggers live scan).
 Domain guess: {domain}
                                 """)
 
@@ -992,9 +1017,14 @@ Domain guess: {domain}
             st.markdown("<div class='section-title'>VP-1000: VITAL SIGNS</div>", unsafe_allow_html=True)
             domain = data.get("domain")
             if domain:
-                with st.spinner(f"Checking vital signs for {domain}..."):
-                    vital = run_vital_pulse(domain)
-                    data = apply_vital_pulse_modifier(data, vital)
+                # Reuse the vital_pulse already fetched for the PDF button (avoid double-apply).
+                vital = data.get("vital_pulse")
+                if not vital:
+                    with st.spinner(f"Checking vital signs for {domain}..."):
+                        vital = run_vital_pulse(domain)
+                        data["vital_pulse"] = vital
+                        if data.get("vital_modifier") is None:
+                            data = apply_vital_pulse_modifier(data, vital)
 
                 # Vital score display
                 vs = vital["vital_score"]
@@ -1036,12 +1066,12 @@ Domain guess: {domain}
                         )
 
                     # Detail metrics
-                    alive = vital["alive"]
-                    careers = vital["careers"]
-                    if alive["alive"]:
-                        st.caption(f"Response time: {alive['response_time_ms']:.0f}ms")
-                    if careers["has_careers"]:
-                        st.caption(f"Careers page: {careers['careers_url']}")
+                    alive = vital.get("alive") or {}
+                    careers = vital.get("careers") or {}
+                    if alive.get("alive"):
+                        st.caption(f"Response time: {alive.get('response_time_ms', 0):.0f}ms")
+                    if careers.get("has_careers"):
+                        st.caption(f"Careers page: {careers.get('careers_url', '')}")
             else:
                 st.markdown(
                     '<div style="padding:20px; background:#fef2f2; border-radius:10px; border:1px solid #fecaca;">'
@@ -1066,7 +1096,7 @@ Domain guess: {domain}
                 st.metric("Agencies", data.get("agency_count", 0))
             with m3:
                 _cc = data.get("contract_count", 0)
-                st.metric("Contracts", "100+" if _cc >= 100 else _cc)
+                st.metric("Contracts", "1000+" if _cc >= 1000 else _cc)
             with m4:
                 st.metric("Years Active", data.get("years_active", 0))
 
@@ -1272,8 +1302,8 @@ Domain guess: {domain}
                     f"<div style='display:flex; gap:20px; font-size:12px; color:#64748b; margin-bottom:10px;'>"
                     f"<span>Value: {_fmt_dollar(s.get('total_value', 0))}</span>"
                     f"<span>Agencies: {s.get('agency_count', 0)}</span>"
-                    f"<span>Contracts: {('100+' if s.get('contract_count', 0) >= 100 else s.get('contract_count', 0))}</span>"
-                    f"<span>YoY: {s.get('yoy_change', 0):+.0%}</span>"
+                    f"<span>Contracts: {('1000+' if s.get('contract_count', 0) >= 1000 else s.get('contract_count', 0))}</span>"
+                    f"<span>YoY: {s.get('yoy_change', 0):+.1%}</span>"
                     f"</div>"
                     f"{axis_bars}"
                     f"{net_metrics_html}"
@@ -1296,7 +1326,7 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
 | Network Position | 0-200 | Prime/sub status and hub importance |
 | Digital Resilience | 0-200 | SSL certificate health + email security (SPF/DMARC). Powered by CYBER-1000 engine. |
 
-**Data sources:** USAspending.gov (contract data) + direct SSL/DNS scanning (Digital Resilience). Updated daily by the US Treasury. Digital Resilience is scanned live when viewing Company Detail.
+**Data sources:** USAspending.gov (federal contract records) and direct SSL/DNS scanning by our CYBER-1000 engine. Scores are recomputed daily on a trailing 12-month window.
 """)
         else:
             st.warning("No scoring data available. Please try again later.")
@@ -1329,7 +1359,7 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
                 "<div style='font-size:14px; font-weight:700; color:#1e293b; margin-bottom:4px;'>"
                 "Backtest Report Available</div>"
                 "<div style='font-size:12px; color:#64748b;'>"
-                "We backtested 1,000 government contractors across FY2015 and FY2018. "
+                "We backtested 1,000 government contractors total (500 from 2015 and 500 from 2018). "
                 "Companies with a score below 400 had a 31 percent chance of losing "
                 "contracts or seeing a 50 percent drop within 3 years. Companies above "
                 "600 had only a 9 percent chance. Download the full report below.</div>"

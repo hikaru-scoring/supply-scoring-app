@@ -24,42 +24,66 @@ DARK_TEXT = colors.HexColor("#1e293b")
 BORDER_GRAY = colors.HexColor("#e2e8f0")
 
 
+BLUE = colors.HexColor("#2E7BE6")
+
+
 def _score_color(score):
     """Return color object based on score tier (matches app.py thresholds)."""
-    if score >= 600:
+    if score >= 800:
         return GREEN
+    if score >= 600:
+        return BLUE
     if score >= 400:
         return AMBER
     return RED
 
 
+# 3-Year Risk bands (mirrors app.py exactly: avg of FY2015 + FY2018 backtest cohorts)
+_RISK_BANDS = [
+    (300, 43.8),
+    (400, 31.1),
+    (500, 22.4),
+    (600, 17.6),
+    (1001, 9.3),
+]
+
+
+def _risk_pct(score):
+    for threshold, pct in _RISK_BANDS:
+        if score < threshold:
+            return pct
+    return 9.3
+
+
 def _risk_rating(score):
-    """Return (label, color) for risk rating (matches 3-Year Risk bands)."""
-    if score >= 600:
-        return "LOW RISK", GREEN
-    if score >= 400:
+    """Return (label, color) for risk rating (matches app.py 3-Year Risk bands)."""
+    pct = _risk_pct(score)
+    if pct >= 30:
+        return "HIGH RISK", RED
+    if pct >= 20:
         return "MODERATE RISK", AMBER
-    return "HIGH RISK", RED
+    return "LOW RISK", GREEN
 
 
 def _risk_advisory(score):
-    """Return advisory statement based on score."""
-    if score >= 600:
+    """Return advisory statement based on score (uses 5-band backtest data)."""
+    pct = _risk_pct(score)
+    if pct >= 30:
         return (
-            "Strong contract base and stable diversification across agencies. "
-            "Backtest data shows about 9 percent of companies in this score "
-            "range experienced a negative outcome within 3 years."
+            f"Elevated risk. Limited contract base, low diversification, or weak "
+            f"continuity. Backtest data shows about {pct:.1f} percent of companies in "
+            f"this score range experienced a negative outcome within 3 years."
         )
-    if score >= 400:
+    if pct >= 20:
         return (
-            "Moderate concentration or limited continuity. Backtest data shows "
-            "about 22 percent of companies in this score range experienced a "
-            "negative outcome within 3 years."
+            f"Moderate concentration or limited continuity. Backtest data shows "
+            f"about {pct:.1f} percent of companies in this score range experienced a "
+            f"negative outcome within 3 years."
         )
     return (
-        "Elevated risk. Limited contract base, low diversification, or weak "
-        "continuity. Backtest data shows about 35 percent of companies in this "
-        "score range experienced a negative outcome within 3 years."
+        f"Strong contract base and stable diversification across agencies. "
+        f"Backtest data shows about {pct:.1f} percent of companies in this score "
+        f"range experienced a negative outcome within 3 years."
     )
 
 
@@ -404,18 +428,17 @@ def generate_supply_pdf(scored_data: dict, company_name: str = "", all_scores: l
 
     total_value = scored_data.get("total_value", 0)
     agency_count = scored_data.get("agency_count", 0)
-    sub_count = scored_data.get("sub_contractor_count", 0)
+    contract_count = scored_data.get("contract_count", 0)
     years_active = scored_data.get("years_active", 0)
     domain = scored_data.get("domain", "N/A")
-    state = scored_data.get("state_code", "N/A")
 
+    cc_display = "1000+" if (contract_count or 0) >= 1000 else str(_safe(contract_count, "0"))
     metrics_data = [
         ["Total Contract Value", _fmt_dollar(total_value)],
         ["Number of Agencies", str(_safe(agency_count, "0"))],
-        ["Sub-contractors Managed", str(_safe(sub_count, "0"))],
+        ["Contracts (last 12 months)", cc_display],
         ["Years Active", str(_safe(years_active, "0"))],
         ["Domain Scanned", str(_safe(domain, "N/A"))],
-        ["State", str(_safe(state, "N/A"))],
     ]
 
     metrics_table_data = [
