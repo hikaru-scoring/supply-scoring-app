@@ -25,30 +25,52 @@ from graph_analysis import (
 from ui_components import inject_css, render_radar_chart
 # pdf_report imported lazily when PDF download is triggered
 
-APP_TITLE = "SUPPLY-1000 -- Supply Chain Scoring"
+APP_TITLE = "SCORING - Government Contractor Intelligence"
 st.set_page_config(page_title=APP_TITLE, page_icon="\u26d3\ufe0f", layout="wide")
 
 # ---------------------------------------------------------------------------
-# Score history
+# Dataset selector: SUPPLY-1000 (top 50 mega-primes) vs FRONTIER-100 (early-stage
+# defense/AI/space). Both use the same cache schema so the entire UI is shared.
 # ---------------------------------------------------------------------------
-SCORES_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "scores_history.json")
-SCORES_CACHE_FILE = os.path.join(os.path.dirname(__file__), "scores_cache.json")
+DATASETS = {
+    "supply": {
+        "label": "SUPPLY-1000",
+        "subtitle": "Top 50 US government contractors",
+        "cache_file": "scores_cache.json",
+        "history_file": "scores_history.json",
+    },
+    "frontier": {
+        "label": "FRONTIER-100",
+        "subtitle": "Early-stage defense, AI, and space contractors",
+        "cache_file": "frontier_cache.json",
+        "history_file": "frontier_history.json",
+    },
+}
+
+
+def _current_dataset() -> dict:
+    key = st.session_state.get("dataset_key", "supply")
+    return DATASETS.get(key, DATASETS["supply"])
+
+
+def _cache_path(filename: str) -> str:
+    return os.path.join(os.path.dirname(__file__), filename)
 
 
 def _load_scores_history() -> dict:
-    if os.path.exists(SCORES_HISTORY_FILE):
-        with open(SCORES_HISTORY_FILE, "r") as f:
+    path = _cache_path(_current_dataset()["history_file"])
+    if os.path.exists(path):
+        with open(path, "r") as f:
             return json.load(f)
     return {}
 
 
 def _load_scores_cache() -> list[dict]:
-    """Load pre-calculated scores from cache (includes VP-1000 + environment).
-    Returns list of scored company dicts, or empty list if cache not available.
-    """
-    if os.path.exists(SCORES_CACHE_FILE):
+    """Load pre-calculated scores for the currently selected dataset."""
+    path = _cache_path(_current_dataset()["cache_file"])
+    if os.path.exists(path):
         try:
-            with open(SCORES_CACHE_FILE, "r") as f:
+            with open(path, "r") as f:
                 cache = json.load(f)
             return cache.get("companies", [])
         except Exception:
@@ -518,6 +540,32 @@ def main():
     # Session state
     if "saved_company_data" not in st.session_state:
         st.session_state.saved_company_data = None
+    if "dataset_key" not in st.session_state:
+        st.session_state.dataset_key = "supply"
+
+    # Dataset selector: swap between SUPPLY-1000 and FRONTIER-100 datasets.
+    # Every downstream tab reads the dataset-specific cache through
+    # _load_scores_cache, so the whole UI switches with one click.
+    _dataset_labels = {k: v["label"] for k, v in DATASETS.items()}
+    _ds_cols = st.columns([2, 5])
+    with _ds_cols[0]:
+        selected_key = st.radio(
+            "Dataset",
+            list(DATASETS.keys()),
+            format_func=lambda k: _dataset_labels[k],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="dataset_key",
+        )
+    with _ds_cols[1]:
+        st.caption(_current_dataset()["subtitle"])
+
+    dataset = _current_dataset()
+
+    # Invalidate cached top-company list when dataset changes
+    if st.session_state.get("_last_dataset_key") != selected_key:
+        st.session_state.all_scores_cache = None
+        st.session_state._last_dataset_key = selected_key
 
     # Tabs
     tab_dash, tab_detail, tab_rankings, tab_batch = st.tabs(["Dashboard", "Company Detail", "Rankings", "Batch Score"])
@@ -527,19 +575,21 @@ def main():
     # ===================================================================
     with tab_dash:
         st.markdown(
-            "<div style='font-size:1.5em; font-weight:900; color:#1e3a8a; margin-bottom:5px;'>"
-            "Supply Chain Dashboard</div>"
-            "<p style='color:#64748b; margin-bottom:20px;'>"
-            "Daily-updated supply chain health scores for top US government contractors, "
-            "powered by USAspending.gov data.</p>",
+            f"<div style='font-size:1.5em; font-weight:900; color:#1e3a8a; margin-bottom:5px;'>"
+            f"{dataset['label']} Dashboard</div>"
+            f"<p style='color:#64748b; margin-bottom:20px;'>"
+            f"Daily-updated scores for {dataset['subtitle'].lower()}, "
+            f"powered by USAspending.gov data.</p>",
             unsafe_allow_html=True,
         )
 
-        with st.expander("How to use SUPPLY-1000"):
-            st.markdown("""
-**Dashboard** shows the top government contractors ranked by supply chain health (0-1000).
+        with st.expander(f"How to use {dataset['label']}"):
+            st.markdown(f"""
+**Dataset:** {dataset['subtitle']}.
 
-**Company Detail** lets you search any contractor and see their full supply chain profile, including a network visualization of prime-to-sub relationships.
+**Dashboard** shows the ranked companies by total score (0-1000).
+
+**Company Detail** lets you search any contractor and see their full profile, including a network visualization of prime-to-sub relationships.
 
 **Rankings** shows all scored companies in a card-based ranking format.
 
@@ -548,13 +598,14 @@ def main():
 **Data source:** USAspending.gov (free, public API) + direct SSL/DNS scanning for Digital Resilience (powered by CYBER-1000 engine).
 """)
 
-        # Load top companies from pre-calculated cache (includes VP-1000 + environment)
+        # Load companies from pre-calculated cache (includes VP-1000 + environment)
         all_scores = []
         cached_scores = _load_scores_cache()
         if cached_scores:
             all_scores = cached_scores
-        else:
-            # Fallback: calculate live if cache not available
+        elif st.session_state.dataset_key == "supply":
+            # Fallback ONLY for SUPPLY-1000 (live-calculable via top-recipients).
+            # FRONTIER-100 must come from its pre-built cache.
             with st.spinner("Loading supply chain data from USAspending.gov..."):
                 all_scores = score_all_top_companies(year=None, limit=50)
                 for i, s in enumerate(all_scores):
@@ -568,7 +619,7 @@ def main():
                 all_scores.sort(key=lambda x: x["total"], reverse=True)
 
         if not all_scores:
-            st.error("Could not load data from USAspending.gov. Please try again later.")
+            st.error(f"{dataset['label']} cache not available yet. Please try again later.")
             return
 
         # Key metrics row
@@ -579,7 +630,7 @@ def main():
         with c1:
             st.markdown(
                 f"<div class='card' style='text-align:center; padding:25px;'>"
-                f"<div style='font-size:14px; color:#64748b; font-weight:600;'>AVG SUPPLY CHAIN SCORE</div>"
+                f"<div style='font-size:14px; color:#64748b; font-weight:600;'>AVG SCORE</div>"
                 f"<div style='font-size:42px; font-weight:900; color:#2E7BE6;'>{avg_score:.0f}</div>"
                 f"<div style='font-size:12px; color:#94a3b8;'>/ 1000</div></div>",
                 unsafe_allow_html=True,
@@ -682,33 +733,38 @@ def main():
     # ===================================================================
     with tab_detail:
         st.markdown(
-            "<div style='font-size:1.5em; font-weight:900; color:#1e3a8a; margin-bottom:5px;'>"
-            "Company Detail</div>",
+            f"<div style='font-size:1.5em; font-weight:900; color:#1e3a8a; margin-bottom:5px;'>"
+            f"{dataset['label']} Company Detail</div>",
             unsafe_allow_html=True,
         )
 
         # Company search
+        _detail_placeholder = (
+            "e.g. Zeno Power, Anduril, Shield AI..."
+            if st.session_state.dataset_key == "frontier"
+            else "e.g. Lockheed Martin, Raytheon, Boeing..."
+        )
         search_text = st.text_input(
             "Search company name",
-            placeholder="e.g. Lockheed Martin, Raytheon, Boeing...",
+            placeholder=_detail_placeholder,
             key="company_search",
         )
 
         # Load scores for dropdown (prefer cache with VP-1000 + environment)
         if "all_scores_cache" not in st.session_state:
-            st.session_state.all_scores_cache = []
+            st.session_state.all_scores_cache = None
 
         all_scores_for_select = st.session_state.all_scores_cache
         if not all_scores_for_select:
             cached_scores_detail = _load_scores_cache()
             if cached_scores_detail:
                 all_scores_for_select = cached_scores_detail
-            else:
+            elif st.session_state.dataset_key == "supply":
                 with st.spinner("Loading company list..."):
                     all_scores_for_select = score_all_top_companies(year=None, limit=50)
-            st.session_state.all_scores_cache = all_scores_for_select
+            st.session_state.all_scores_cache = all_scores_for_select or []
 
-        company_names = [s["name"] for s in all_scores_for_select]
+        company_names = [s["name"] for s in (all_scores_for_select or [])]
 
         # If search text, try autocomplete
         if search_text:
@@ -1211,10 +1267,10 @@ def main():
     # ===================================================================
     with tab_rankings:
         st.markdown(
-            "<div style='font-size:1.5em; font-weight:900; color:#1e3a8a; margin-bottom:5px;'>"
-            "Supply Chain Rankings</div>"
-            "<p style='color:#64748b; margin-bottom:20px;'>"
-            "All scored companies ranked by supply chain health.</p>",
+            f"<div style='font-size:1.5em; font-weight:900; color:#1e3a8a; margin-bottom:5px;'>"
+            f"{dataset['label']} Rankings</div>"
+            f"<p style='color:#64748b; margin-bottom:20px;'>"
+            f"All scored companies ranked by total score.</p>",
             unsafe_allow_html=True,
         )
 
@@ -1308,8 +1364,8 @@ def main():
 
             # Methodology
             with st.expander("Methodology"):
-                st.markdown("""
-**SUPPLY-1000 Scoring Methodology**
+                st.markdown(f"""
+**{dataset['label']} Scoring Methodology**
 
 Each company is scored on 5 axes (0-200 each, total 0-1000).
 
@@ -1339,13 +1395,14 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
             unsafe_allow_html=True,
         )
 
-        # Backtest report download
+        # Backtest report download (only for SUPPLY-1000 — FRONTIER-100 has
+        # no multi-year backtest yet since the dataset is new)
         backtest_pdf_path = os.path.join(
             os.path.dirname(__file__),
             "backtest_results",
             "SUPPLY-1000_Backtest_Report.pdf",
         )
-        if os.path.exists(backtest_pdf_path):
+        if st.session_state.dataset_key == "supply" and os.path.exists(backtest_pdf_path):
             with open(backtest_pdf_path, "rb") as _f:
                 _pdf_bytes = _f.read()
             st.markdown(
@@ -1370,10 +1427,15 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
             )
             st.markdown("<br>", unsafe_allow_html=True)
 
+        _batch_placeholder = (
+            "ZENO POWER SYSTEMS\nANDURIL INDUSTRIES\nSHIELD AI"
+            if st.session_state.dataset_key == "frontier"
+            else "BOOZ ALLEN HAMILTON INC\nLOCKHEED MARTIN CORPORATION\nGENERAL DYNAMICS INFORMATION TECHNOLOGY, INC."
+        )
         batch_input = st.text_area(
             "Enter company names (one per line)",
             height=200,
-            placeholder="BOOZ ALLEN HAMILTON INC\nLOCKHEED MARTIN CORPORATION\nGENERAL DYNAMICS INFORMATION TECHNOLOGY, INC.",
+            placeholder=_batch_placeholder,
         )
 
         if st.button("Score All Companies", key="batch_score_btn"):

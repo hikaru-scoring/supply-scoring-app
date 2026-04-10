@@ -2,11 +2,39 @@
 """Daily score recorder for SUPPLY-1000 (standalone, no Streamlit dependency)."""
 import json
 import os
+import socket
 import sys
+import threading
 import time
 from datetime import date
 
 import requests
+
+# Global hard cap on every blocking socket operation so a single bad domain
+# cannot stall the entire daily regen.
+socket.setdefaulttimeout(15)
+
+
+def _run_with_deadline(fn, timeout, *args, **kwargs):
+    """Run fn in a daemon thread and abandon it if it does not return in time.
+    Daemon threads die with the main process so abandoned ones do not leak.
+    Returns (result, error_str_or_None).
+    """
+    result = [None]
+    error = [None]
+
+    def target():
+        try:
+            result[0] = fn(*args, **kwargs)
+        except Exception as exc:
+            error[0] = repr(exc)
+
+    t = threading.Thread(target=target, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return None, "timeout"
+    return result[0], error[0]
 
 # Import scoring logic from data_logic to ensure consistency
 from data_logic import (
@@ -93,20 +121,28 @@ def main():
         print(f"ERROR: Only {len(scored) if scored else 0} companies scored, skipping save")
         sys.exit(1)
 
-    # Apply VP-1000 + environment adjustment to each company
-    print("  Applying VP-1000 vital pulse checks...")
+    # Apply VP-1000 + environment adjustment to each company.
+    # Each company gets a 45s hard deadline via _run_with_deadline so one bad
+    # domain (slow SSL handshake, hanging careers page, etc.) cannot stall the
+    # whole daily regen. Companies that time out keep their base 5-axis score
+    # and a neutral vital_modifier.
+    print("  Applying VP-1000 vital pulse checks...", flush=True)
+    PER_COMPANY_DEADLINE = 45
+
     for i, s in enumerate(scored):
         domain = s.get("domain") or _guess_domain(s["name"])
         if domain:
-            try:
-                vital = run_vital_pulse(domain)
+            vital, err = _run_with_deadline(run_vital_pulse, PER_COMPANY_DEADLINE, domain)
+            if vital is not None:
                 s = apply_vital_pulse_modifier(s, vital)
-                print(f"    VP-1000 {s['name']}: vital_score={vital['vital_score']}, modifier={s.get('vital_modifier', 1.0)}")
-            except Exception as e:
-                print(f"    VP-1000 FAILED for {s['name']}: {e}")
-        time.sleep(0.5)  # rate limiting for domain checks
+                print(f"    VP-1000 {s['name']}: vital_score={vital['vital_score']}, modifier={s.get('vital_modifier', 1.0)}", flush=True)
+            elif err == "timeout":
+                print(f"    VP-1000 TIMEOUT for {s['name']} (keeping base score)", flush=True)
+            else:
+                print(f"    VP-1000 FAILED for {s['name']}: {err}", flush=True)
+        time.sleep(0.3)
 
-        # Apply environment adjustment
+        # Apply environment adjustment (no-op until live data wired)
         env = calculate_environment_adjustment(
             s.get("state_code"),
             s.get("naics_code"),
