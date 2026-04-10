@@ -742,24 +742,14 @@ def main():
                     break
 
             if existing:
-                # Re-score with cyber scan enabled for detail view
+                # Use cached scores as-is so Dashboard/Rankings/Detail all match.
+                # Cyber score is part of the daily cache and does not need a live
+                # re-scan on every Detail view (would create score divergence).
                 data = dict(existing)
-                # Deep copy axes so we don't mutate cached object
                 data["axes"] = dict(data["axes"])
-                from data_logic import _guess_domain, _scan_domain_quick
-                domain = data.get("domain") or _guess_domain(selected_name)
-                if domain:
-                    with st.spinner(f"Scanning {domain} for Digital Resilience..."):
-                        cyber_score, cyber_detail = _scan_domain_quick(domain)
-                    data["domain"] = domain
-                    data["digital_score_detail"] = cyber_detail
-                    # Replace cyber axis, preserving VP modifier so it stays consistent
-                    # with the rest of the cached axes (which are also VP-scaled).
-                    modifier = data.get("vital_modifier", 1.0) or 1.0
-                    scaled_cyber = max(0, min(200, round(cyber_score * modifier)))
-                    data["axes"]["Digital Resilience"] = scaled_cyber
-                    # Recompute total from axes so radar matches the big number
-                    data["total"] = max(0, min(1000, sum(data["axes"].values())))
+                from data_logic import _guess_domain
+                if not data.get("domain"):
+                    data["domain"] = _guess_domain(selected_name)
             else:
                 with st.spinner(f"Building profile for {selected_name}..."):
                     profile = get_company_profile(selected_name)
