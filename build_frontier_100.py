@@ -50,11 +50,34 @@ FRONTIER_NAICS = {
     "541713": "R&D in Nanotechnology",
 }
 
-# Company size window: $1M to $100M TTM contract value.
-# Below: one-off vendors with nothing to evaluate.
-# Above: established mega-primes D&B already covers well.
+# Awarding agencies that define "defense, AI, space" customer base. Any
+# company whose TTM contract value does not come from these agencies is
+# filtered out of FRONTIER-100. This turns the NAICS pool (technical
+# category) into a true defense/AI/space pool (customer alignment).
+DEFENSE_SPACE_AGENCIES = [
+    "Department of Defense",
+    "Department of the Navy",
+    "Department of the Air Force",
+    "Department of the Army",
+    "United States Space Force",
+    "Defense Advanced Research Projects Agency",
+    "Missile Defense Agency",
+    "Defense Logistics Agency",
+    "Defense Information Systems Agency",
+    "Defense Threat Reduction Agency",
+    "National Aeronautics and Space Administration",
+    "National Geospatial Intelligence Agency",
+    "National Security Agency",
+    "Defense Intelligence Agency",
+]
+
+# Company size window: $1M to $30M TTM contract value.
+# This is the true early-stage band where D&B has thin signal and banks
+# cannot easily underwrite off public filings. Zeno Power Systems (our
+# example, $15.8M TTM) sits near the median of this range, so the peer
+# comparison is meaningful.
 MIN_VALUE = 1_000_000
-MAX_VALUE = 100_000_000
+MAX_VALUE = 30_000_000
 TARGET_COUNT = 100
 
 
@@ -78,7 +101,17 @@ def _run_with_deadline(fn, timeout, *args, **kwargs):
 
 
 def fetch_naics_recipients(naics_code, start, end, max_pages=5):
-    """Fetch top recipients for a NAICS code, paginating through max_pages."""
+    """Fetch top recipients for a NAICS code filtered to defense/space customers.
+
+    Applies awarding agencies filter so the candidate pool is pre-restricted
+    to companies whose contracts are with DoD, NASA, Space Force, or similar.
+    This eliminates healthcare IT, civil engineering, and other generic 541xxx
+    contractors that share NAICS codes with real defense/space firms.
+    """
+    agency_filter = [
+        {"type": "awarding", "tier": "toptier", "name": name}
+        for name in DEFENSE_SPACE_AGENCIES
+    ]
     all_results = []
     for page in range(1, max_pages + 1):
         payload = {
@@ -86,6 +119,7 @@ def fetch_naics_recipients(naics_code, start, end, max_pages=5):
                 "award_type_codes": ["A", "B", "C", "D"],
                 "time_period": [{"start_date": start, "end_date": end}],
                 "naics_codes": {"require": [naics_code]},
+                "agencies": agency_filter,
             },
             "category": "recipient",
             "limit": 100,
@@ -112,12 +146,16 @@ def fetch_naics_recipients(naics_code, start, end, max_pages=5):
 
 
 def build_candidate_pool(start, end):
-    """Query every NAICS, merge, dedupe, filter by size, return candidates."""
+    """Query every NAICS, merge, dedupe, filter by size, return candidates.
+
+    Uses stratified sampling across the $1M-$30M range so the selection is
+    not all clustered near the upper bound. Zeno Power Systems ($15.8M)
+    should end up near the median of the selected pool.
+    """
     all_entries = []
     for naics, label in FRONTIER_NAICS.items():
         print(f"  NAICS {naics} {label}...", flush=True)
         entries = fetch_naics_recipients(naics, start, end, max_pages=5)
-        # Tag each entry with its source NAICS so we can inspect later
         for e in entries:
             e["_naics"] = naics
             e["_naics_label"] = label
@@ -125,20 +163,60 @@ def build_candidate_pool(start, end):
         time.sleep(0.3)
     print(f"  Raw candidates across NAICS: {len(all_entries)}", flush=True)
 
-    # Dedupe: same parent company may appear in multiple NAICS
     deduped = _deduplicate_recipients(all_entries)
     print(f"  After dedup: {len(deduped)}", flush=True)
 
-    # Filter by size window
     filtered = [
         e for e in deduped
         if MIN_VALUE <= float(e.get("amount") or 0) <= MAX_VALUE
     ]
     print(f"  After size filter (${MIN_VALUE/1e6:.0f}M-${MAX_VALUE/1e6:.0f}M): {len(filtered)}", flush=True)
 
-    # Sort by amount desc
-    filtered.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
-    return filtered[:TARGET_COUNT]
+    # Stratified sample across 4 brackets so the selection is not clustered
+    # at the top of the range. Each bracket contributes up to 25 companies
+    # (sorted by amount desc within the bracket).
+    brackets = [
+        (1_000_000,   5_000_000),
+        (5_000_000,  10_000_000),
+        (10_000_000, 20_000_000),
+        (20_000_000, 30_000_000),
+    ]
+    per_bracket = TARGET_COUNT // len(brackets)  # 25
+
+    selected = []
+    seen_names = set()
+    for lo, hi in brackets:
+        in_bracket = [
+            e for e in filtered
+            if lo <= float(e.get("amount") or 0) < hi
+        ]
+        in_bracket.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
+        taken = 0
+        for e in in_bracket:
+            key = _normalize_company_name(e.get("name") or "")
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+            selected.append(e)
+            taken += 1
+            if taken >= per_bracket:
+                break
+        print(f"    bracket ${lo/1e6:.0f}M-${hi/1e6:.0f}M: {taken} taken (from {len(in_bracket)} available)", flush=True)
+
+    # If any bracket was short, top up from remaining candidates sorted by value desc
+    if len(selected) < TARGET_COUNT:
+        remaining = [
+            e for e in filtered
+            if _normalize_company_name(e.get("name") or "") not in seen_names
+        ]
+        remaining.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
+        need = TARGET_COUNT - len(selected)
+        selected.extend(remaining[:need])
+        print(f"  Topped up with {min(need, len(remaining))} extras", flush=True)
+
+    # Final sort by amount desc for presentation
+    selected.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
+    return selected[:TARGET_COUNT]
 
 
 def build_profile(entry, start, end):
