@@ -540,25 +540,46 @@ def main():
     # Session state
     if "saved_company_data" not in st.session_state:
         st.session_state.saved_company_data = None
-    if "dataset_key" not in st.session_state:
+
+    # URL-based product lock: ?product=frontier-100 or ?product=supply-1000
+    # locks the app to a single dataset and hides the toggle. Used when sending
+    # a link to a specific customer so the page reads like a standalone product.
+    _qp = st.query_params
+    _locked_product = None
+    if "product" in _qp:
+        _pv = _qp["product"]
+        if isinstance(_pv, list):
+            _pv = _pv[0] if _pv else ""
+        _pv = (_pv or "").lower().strip()
+        if _pv in ("frontier-100", "frontier", "frontier100"):
+            _locked_product = "frontier"
+        elif _pv in ("supply-1000", "supply", "supply1000"):
+            _locked_product = "supply"
+
+    if _locked_product:
+        st.session_state.dataset_key = _locked_product
+    elif "dataset_key" not in st.session_state:
         st.session_state.dataset_key = "supply"
 
-    # Dataset selector: swap between SUPPLY-1000 and FRONTIER-100 datasets.
-    # Every downstream tab reads the dataset-specific cache through
-    # _load_scores_cache, so the whole UI switches with one click.
-    _dataset_labels = {k: v["label"] for k, v in DATASETS.items()}
-    _ds_cols = st.columns([2, 5])
-    with _ds_cols[0]:
-        selected_key = st.radio(
-            "Dataset",
-            list(DATASETS.keys()),
-            format_func=lambda k: _dataset_labels[k],
-            horizontal=True,
-            label_visibility="collapsed",
-            key="dataset_key",
-        )
-    with _ds_cols[1]:
-        st.caption(_current_dataset()["subtitle"])
+    if not _locked_product:
+        # Dataset selector: swap between SUPPLY-1000 and FRONTIER-100 datasets.
+        # Every downstream tab reads the dataset-specific cache through
+        # _load_scores_cache, so the whole UI switches with one click.
+        _dataset_labels = {k: v["label"] for k, v in DATASETS.items()}
+        _ds_cols = st.columns([2, 5])
+        with _ds_cols[0]:
+            selected_key = st.radio(
+                "Dataset",
+                list(DATASETS.keys()),
+                format_func=lambda k: _dataset_labels[k],
+                horizontal=True,
+                label_visibility="collapsed",
+                key="dataset_key",
+            )
+        with _ds_cols[1]:
+            st.caption(_current_dataset()["subtitle"])
+    else:
+        selected_key = _locked_product
 
     dataset = _current_dataset()
 
