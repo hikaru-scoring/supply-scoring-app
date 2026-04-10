@@ -273,7 +273,7 @@ def generate_supply_pdf(scored_data: dict, company_name: str = "", all_scores: l
         styles["ReportBody"],
     ))
 
-    # Industry average and rank (if all_scores provided)
+    # Top-50 average and rank (if all_scores provided)
     if all_scores:
         avg = int(sum(s.get("total", 0) for s in all_scores) / len(all_scores))
         rank = 1
@@ -284,7 +284,7 @@ def generate_supply_pdf(scored_data: dict, company_name: str = "", all_scores: l
         diff_sign = "+" if diff >= 0 else ""
         elements.append(Paragraph(
             f"<font size='9' color='#64748b'>"
-            f"Industry Average: <b>{avg}</b> / 1000 &nbsp;&nbsp; "
+            f"Top-{len(all_scores)} Average: <b>{avg}</b> / 1000 &nbsp;&nbsp; "
             f"Rank: <b>#{rank}</b> of {len(all_scores)} &nbsp;&nbsp; "
             f"vs Average: <b>{diff_sign}{diff}</b>"
             f"</font>",

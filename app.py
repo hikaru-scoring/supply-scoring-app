@@ -1158,8 +1158,8 @@ Domain guess: {domain}
                 _render_ego_network(sample_G, graph_node, radius=2)
 
                 # Risk propagation
-                st.markdown("<div class='section-title'>RISK PROPAGATION</div>", unsafe_allow_html=True)
-                st.caption(f"What happens if {graph_node} fails? Simulated impact on connected companies.")
+                st.markdown("<div class='section-title'>RISK PROPAGATION (Sample Network)</div>", unsafe_allow_html=True)
+                st.caption(f"What happens if {graph_node} fails? Simulated impact computed on the DoD sample sub-award graph (partial coverage, illustrative only).")
 
                 risk = simulate_risk_propagation(sample_G, graph_node, decay_factor=0.7)
                 if risk:
