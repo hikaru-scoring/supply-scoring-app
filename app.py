@@ -1486,9 +1486,32 @@ Each company is scored on 5 axes (0-200 each, total 0-1000).
 
                 if all_profiles:
                     progress.progress(0.9, text="Scoring companies...")
+
+                    # Use the currently selected dataset's cache as the percentile
+                    # ranking population so a batch-scored company is compared to
+                    # its correct peer group (SUPPLY-1000 mega-primes vs
+                    # FRONTIER-100 early-stage). Without this, single-company
+                    # batches self-compare and always land at the 50th percentile.
+                    _batch_dataset_cache = _load_scores_cache()
+                    batch_population = list(all_profiles)
+                    if _batch_dataset_cache:
+                        for s in _batch_dataset_cache:
+                            batch_population.append({
+                                "name": s["name"],
+                                "total_prime_value": s.get("total_value", 0),
+                                "total_sub_value": 0,
+                                "agencies": ["x"] * s.get("agency_count", 0),
+                                "prime_contractors": [],
+                                "sub_contractors": [],
+                                "yearly_values": s.get("yearly_values", {}),
+                                "contract_count": s.get("contract_count", 1),
+                                "years_active": list(range(s.get("years_active", 1))),
+                            })
+
                     scored_results = []
                     for profile in all_profiles:
-                        scored = score_company(profile, all_profiles)
+                        profile["_run_cyber_scan"] = True
+                        scored = score_company(profile, batch_population)
                         domain = scored.get("domain")
                         if domain:
                             vital = run_vital_pulse(domain)
