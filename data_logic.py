@@ -330,119 +330,169 @@ def _enrich_profile_location(profile):
 # Build company profile
 # ---------------------------------------------------------------------------
 
+def _parse_amount(raw) -> float:
+    if raw is None:
+        return 0.0
+    if isinstance(raw, str):
+        try:
+            return float(raw.replace(",", ""))
+        except ValueError:
+            return 0.0
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_company_profile(company_name: str) -> dict:
-    """Build a company profile from USAspending data across multiple years.
+    """Build a company profile from USAspending data.
 
-    Returns dict with:
-      - name, total_prime_value, total_sub_value
-      - agencies (set of awarding agency names)
-      - prime_contractors (set: who gives this company sub-contracts)
-      - sub_contractors (set: who this company gives sub-contracts to)
-      - yearly_values: {year: total_value}
-      - contract_count, sub_count
+    Primary evaluation window is TTM (trailing 12 months). If the company has
+    no TTM contract activity (common for early-stage contractors between
+    awards), falls back to a 5-year lifetime window so the company is still
+    scored rather than disappearing with a $0 total. The eval_window field
+    records which window ended up driving total_prime_value / contract_count
+    / agencies so the UI can disclose it.
+
+    Historical yearly_values and years_active are always populated from the
+    per-year queries regardless of which window drives the primary totals, so
+    the Contract Continuity axis always has history to work with.
     """
     profile = {
         "name": company_name,
-        "total_prime_value": 0,
-        "total_sub_value": 0,
-        "agencies": set(),
-        "prime_contractors": set(),
-        "sub_contractors": set(),
+        "total_prime_value": 0.0,
+        "total_sub_value": 0.0,
+        "agencies": [],
+        "prime_contractors": [],
+        "sub_contractors": [],
         "yearly_values": {},
         "contract_count": 0,
         "sub_count": 0,
-        "years_active": set(),
+        "years_active": [],
+        "eval_window": "TTM",
     }
 
-    # Track awards by ID to prevent counting multi-year contracts more than once
-    seen_prime_ids: set = set()
+    name_upper = company_name.upper()
+
+    def _matches(recipient_name: str) -> bool:
+        rn = (recipient_name or "").upper()
+        if not rn:
+            return False
+        return name_upper in rn or rn in name_upper
+
+    # --- 1. TTM primary window -------------------------------------------
+    ttm_total = 0.0
+    ttm_count = 0
+    ttm_agencies: set = set()
+    ttm_seen_ids: set = set()
+    ttm_primes = search_prime_awards(recipient_name=company_name, year=None, limit=100)
+    for award in ttm_primes:
+        if not _matches(award.get("Recipient Name")):
+            continue
+        award_id = award.get("Award ID") or award.get("generated_internal_id")
+        if award_id and award_id in ttm_seen_ids:
+            continue
+        if award_id:
+            ttm_seen_ids.add(award_id)
+        amount = _parse_amount(award.get("Award Amount"))
+        ttm_total += amount
+        ttm_count += 1
+        agency = award.get("Awarding Agency")
+        if agency:
+            ttm_agencies.add(agency)
+
+    # --- 2. Historical per-year window for yearly_values / years_active ---
+    years_active: set = set()
+    hist_total = 0.0
+    hist_count = 0
+    hist_agencies: set = set()
+    hist_seen_ids: set = set()
+    sub_contractors: set = set()
+    prime_contractors: set = set()
+    total_sub_value = 0.0
+    sub_count = 0
     seen_sub_ids: set = set()
 
-    # Fetch prime awards for each year
     for year in ANALYSIS_YEARS:
         primes = search_prime_awards(recipient_name=company_name, year=year, limit=50)
-        year_value = 0
+        year_value = 0.0
         for award in primes:
-            rname = (award.get("Recipient Name") or "").upper()
-            if company_name.upper() in rname or rname in company_name.upper():
-                # Deduplicate by Award ID across years
-                award_id = award.get("Award ID") or award.get("generated_internal_id")
-                if award_id and award_id in seen_prime_ids:
-                    # Multi-year contract already counted; just mark year as active
-                    profile["years_active"].add(year)
-                    continue
-                if award_id:
-                    seen_prime_ids.add(award_id)
+            if not _matches(award.get("Recipient Name")):
+                continue
+            award_id = award.get("Award ID") or award.get("generated_internal_id")
+            if award_id and award_id in hist_seen_ids:
+                years_active.add(year)
+                continue
+            if award_id:
+                hist_seen_ids.add(award_id)
+            amount = _parse_amount(award.get("Award Amount"))
+            year_value += amount
+            hist_total += amount
+            hist_count += 1
+            agency = award.get("Awarding Agency")
+            if agency:
+                hist_agencies.add(agency)
+            years_active.add(year)
 
-                amount = award.get("Award Amount") or 0
-                if isinstance(amount, str):
-                    try:
-                        amount = float(amount.replace(",", ""))
-                    except ValueError:
-                        amount = 0
-                amount = float(amount)
-                profile["total_prime_value"] += amount
-                year_value += amount
-                profile["contract_count"] += 1
-                agency = award.get("Awarding Agency")
-                if agency:
-                    profile["agencies"].add(agency)
-                profile["years_active"].add(year)
-
-        # Fetch sub-awards where this company is the prime
+        # Sub-awards where this company is the prime (populates sub_contractors)
         subs = search_sub_awards(prime_recipient=company_name, year=year, limit=50)
         for sub in subs:
-            prime_name = (sub.get("Prime Recipient Name") or "").upper()
-            if company_name.upper() in prime_name or prime_name in company_name.upper():
-                sub_name = sub.get("Sub-Awardee Name")
-                if sub_name:
-                    profile["sub_contractors"].add(sub_name)
-                profile["years_active"].add(year)
+            if not _matches(sub.get("Prime Recipient Name")):
+                continue
+            sub_name = sub.get("Sub-Awardee Name")
+            if sub_name:
+                sub_contractors.add(sub_name)
+            years_active.add(year)
 
-        # Fetch sub-awards where this company is the sub
-        # Search broadly and filter
+        # Sub-awards where this company is the sub (populates prime_contractors)
         subs_as_sub = search_sub_awards(year=year, limit=100)
         for sub in subs_as_sub:
-            sub_name_str = (sub.get("Sub-Awardee Name") or "").upper()
-            if company_name.upper() in sub_name_str or sub_name_str in company_name.upper():
-                # Deduplicate by Sub-Award ID across years
-                sub_id = sub.get("Sub-Award ID") or sub.get("internal_id")
-                if sub_id and sub_id in seen_sub_ids:
-                    profile["years_active"].add(year)
-                    continue
-                if sub_id:
-                    seen_sub_ids.add(sub_id)
-
-                amount = sub.get("Sub-Award Amount") or 0
-                if isinstance(amount, str):
-                    try:
-                        amount = float(amount.replace(",", ""))
-                    except ValueError:
-                        amount = 0
-                amount = float(amount)
-                profile["total_sub_value"] += amount
-                profile["sub_count"] += 1
-                prime_name = sub.get("Prime Recipient Name")
-                if prime_name:
-                    profile["prime_contractors"].add(prime_name)
-                profile["years_active"].add(year)
+            if not _matches(sub.get("Sub-Awardee Name")):
+                continue
+            sub_id = sub.get("Sub-Award ID") or sub.get("internal_id")
+            if sub_id and sub_id in seen_sub_ids:
+                years_active.add(year)
+                continue
+            if sub_id:
+                seen_sub_ids.add(sub_id)
+            total_sub_value += _parse_amount(sub.get("Sub-Award Amount"))
+            sub_count += 1
+            prime_name = sub.get("Prime Recipient Name")
+            if prime_name:
+                prime_contractors.add(prime_name)
+            years_active.add(year)
 
         if year_value > 0:
             profile["yearly_values"][year] = year_value
 
         time.sleep(0.3)  # rate limiting
 
-    # Convert sets to lists for JSON serialization
-    profile["agencies"] = list(profile["agencies"])
-    profile["prime_contractors"] = list(profile["prime_contractors"])
-    profile["sub_contractors"] = list(profile["sub_contractors"])
-    profile["years_active"] = sorted(list(profile["years_active"]))
-    profile["domain"] = _guess_domain(profile["name"])
-    profile["state_code"] = None  # Will be populated from USAspending location data
-    profile["naics_code"] = None  # Will be populated from contract NAICS codes
+    # --- 3. Select primary window: TTM if meaningfully active, else fallback
+    # A company with less than $1M in TTM is treated as dormant and the
+    # 5-year lifetime window takes over. $1M is the same minimum the
+    # FRONTIER-100 builder uses, so the two paths stay consistent.
+    TTM_ACTIVE_THRESHOLD = 1_000_000
+    if ttm_total >= TTM_ACTIVE_THRESHOLD:
+        profile["total_prime_value"] = ttm_total
+        profile["contract_count"] = ttm_count
+        profile["agencies"] = list(ttm_agencies)
+        profile["eval_window"] = "TTM"
+    else:
+        profile["total_prime_value"] = hist_total
+        profile["contract_count"] = hist_count
+        profile["agencies"] = list(hist_agencies)
+        profile["eval_window"] = "5-year fallback"
 
-    # Try to extract state from USAspending recipient location
+    profile["total_sub_value"] = total_sub_value
+    profile["sub_count"] = sub_count
+    profile["sub_contractors"] = list(sub_contractors)
+    profile["prime_contractors"] = list(prime_contractors)
+    profile["years_active"] = sorted(list(years_active))
+    profile["domain"] = _guess_domain(profile["name"])
+    profile["state_code"] = None
+    profile["naics_code"] = None
+
     try:
         _enrich_profile_location(profile)
     except Exception:
@@ -772,23 +822,31 @@ def _guess_domain(company_name):
     "THE BOEING COMPANY" -> "boeing.com"
     Returns domain string or None.
     """
-    name = company_name.upper()
-    # Remove common suffixes
-    for suffix in [" CORPORATION", " CORP", " INC", " LLC", " LTD", " CO",
-                   " COMPANY", " THE", " LP", " LLP", " GROUP", " HOLDINGS",
-                   " SERVICES", " TECHNOLOGIES", " SOLUTIONS"]:
-        name = name.replace(suffix, "")
-    name = name.strip()
+    name = company_name.upper().strip()
     # Remove leading "THE "
     if name.startswith("THE "):
         name = name[4:]
-    # Remove punctuation
+    # Strip trailing punctuation so regex end-anchor matches cleanly
+    name = re.sub(r'[.,;]+\s*$', '', name)
+    # Repeatedly strip suffixes only from the END of the string, with word
+    # boundary. This prevents substrings like " CO" from eating into "COMPANY"
+    # or " SOLUTIONS" from consuming the brand of a name that happens to end
+    # in "SOLUTIONS".
+    suffix_pattern = re.compile(
+        r'[\s,]+(CORPORATION|CORP|INCORPORATED|INC|LLC|LLP|L\.?P\.?|PTE|LTD|'
+        r'CO|COMPANY|HOLDINGS|ENTERPRISES|INTERNATIONAL|INTL)\.?\s*$',
+        re.IGNORECASE,
+    )
+    prev = None
+    while prev != name:
+        prev = name
+        name = suffix_pattern.sub('', name).strip()
+        name = re.sub(r'[.,;]+\s*$', '', name)
+    # Remove remaining punctuation (keep letters, digits, spaces)
     name = re.sub(r'[^A-Z0-9 ]', '', name)
-    # Remove extra spaces and join
     parts = name.split()
     if not parts:
         return None
-    # Try variations
     domain_guess = "".join(parts).lower() + ".com"
     return domain_guess
 

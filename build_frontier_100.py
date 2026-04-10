@@ -37,18 +37,37 @@ CACHE_FILE = os.path.join(os.path.dirname(__file__), "frontier_cache.json")
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "frontier_history.json")
 
 # NAICS codes aimed at Erebor Bank's stated focus: defense, AI, space.
+# 541330 Engineering Services was previously included but dominated the pool
+# with defense engineering consultants (Raytheon-style contractors) rather
+# than the product-company startups Vlad is actually lending to. It is now
+# excluded and replaced with more product-focused manufacturing and
+# communications codes so the pool skews toward Anduril/Shield AI peers.
 FRONTIER_NAICS = {
+    # Product manufacturing (defense/space hardware)
     "336414": "Guided Missile & Space Vehicle Manufacturing",
     "336415": "Space/Missile Propulsion",
     "336419": "Other Guided Missile & Space Vehicle Parts",
+    "336411": "Aircraft Manufacturing",
+    "336412": "Aircraft Engine & Engine Parts",
+    "336413": "Other Aircraft Parts & Auxiliary Equipment",
+    # Electronics / sensors / communications
     "334511": "Search, Detection, Navigation, Guidance",
     "334220": "Radio/TV/Wireless Equipment",
-    "541330": "Engineering Services",
+    "334290": "Other Communications Equipment",
+    "334413": "Semiconductor & Related Device Manufacturing",
+    # Software / AI
     "541511": "Custom Computer Programming (AI/Software)",
     "541512": "Computer Systems Design (AI/Software)",
+    # R&D (pure tech, not consulting)
     "541715": "R&D in Physical, Engineering, Life Sciences",
     "541713": "R&D in Nanotechnology",
+    "541714": "R&D in Biotechnology",
 }
+
+# Hard cap per NAICS so no single code dominates the sample. With ~15 codes
+# and a cap of 15 per code, the pool can still hit the target of 100 but no
+# single category takes over the way 541330 did previously.
+PER_NAICS_CAP = 15
 
 # Awarding agencies that define "defense, AI, space" customer base. Any
 # company whose TTM contract value does not come from these agencies is
@@ -173,8 +192,9 @@ def build_candidate_pool(start, end):
     print(f"  After size filter (${MIN_VALUE/1e6:.0f}M-${MAX_VALUE/1e6:.0f}M): {len(filtered)}", flush=True)
 
     # Stratified sample across 4 brackets so the selection is not clustered
-    # at the top of the range. Each bracket contributes up to 25 companies
-    # (sorted by amount desc within the bracket).
+    # at the top of the range. Each bracket contributes up to 25 companies.
+    # In addition, enforce a per-NAICS cap so no single code dominates the
+    # pool the way 541330 Engineering Services did previously.
     brackets = [
         (1_000_000,   5_000_000),
         (5_000_000,  10_000_000),
@@ -185,6 +205,7 @@ def build_candidate_pool(start, end):
 
     selected = []
     seen_names = set()
+    naics_count: dict = {}
     for lo, hi in brackets:
         in_bracket = [
             e for e in filtered
@@ -196,14 +217,19 @@ def build_candidate_pool(start, end):
             key = _normalize_company_name(e.get("name") or "")
             if key in seen_names:
                 continue
+            naics = e.get("_naics")
+            if naics_count.get(naics, 0) >= PER_NAICS_CAP:
+                continue
             seen_names.add(key)
+            naics_count[naics] = naics_count.get(naics, 0) + 1
             selected.append(e)
             taken += 1
             if taken >= per_bracket:
                 break
         print(f"    bracket ${lo/1e6:.0f}M-${hi/1e6:.0f}M: {taken} taken (from {len(in_bracket)} available)", flush=True)
 
-    # If any bracket was short, top up from remaining candidates sorted by value desc
+    # If any bracket was short, top up from remaining candidates sorted by
+    # value desc, still respecting the per-NAICS cap.
     if len(selected) < TARGET_COUNT:
         remaining = [
             e for e in filtered
@@ -211,8 +237,22 @@ def build_candidate_pool(start, end):
         ]
         remaining.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
         need = TARGET_COUNT - len(selected)
-        selected.extend(remaining[:need])
-        print(f"  Topped up with {min(need, len(remaining))} extras", flush=True)
+        added = 0
+        for e in remaining:
+            if added >= need:
+                break
+            naics = e.get("_naics")
+            if naics_count.get(naics, 0) >= PER_NAICS_CAP:
+                continue
+            key = _normalize_company_name(e.get("name") or "")
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+            naics_count[naics] = naics_count.get(naics, 0) + 1
+            selected.append(e)
+            added += 1
+        print(f"  Topped up with {added} extras (per-NAICS cap {PER_NAICS_CAP} enforced)", flush=True)
+    print(f"  NAICS distribution after selection: {naics_count}", flush=True)
 
     # Final sort by amount desc for presentation
     selected.sort(key=lambda e: float(e.get("amount") or 0), reverse=True)
