@@ -574,7 +574,6 @@ def main():
         # Key metrics row
         avg_score = sum(s["total"] for s in all_scores) / len(all_scores)
         total_contract_value = sum(s["total_value"] for s in all_scores)
-        total_subs = sum(s["sub_contractor_count"] for s in all_scores)
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:

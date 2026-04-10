@@ -516,7 +516,11 @@ def get_top_company_profiles(year=None, limit=50) -> list[dict]:
                 if agency:
                     agencies_set.add(agency)
         profile["agencies"] = list(agencies_set)
-        profile["contract_count"] = max(count, 1)
+        # Use the real match count, not max(count, 1). A floor of 1 used to
+        # paper over the silent pagination failure. Now that pagination works,
+        # if count is still 0 the matching loop has a real problem we want to
+        # see rather than hide.
+        profile["contract_count"] = count
 
         # Sub-award lookup intentionally skipped: USAspending sub-award search
         # filters by sub-awardee, not by prime, so the result is unreliable for
