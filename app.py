@@ -692,7 +692,7 @@ def main():
         # Top 10 / Bottom 10
         col_top, col_bot = st.columns(2)
         with col_top:
-            st.markdown("<div class='section-title'>TOP 10 SUPPLY CHAINS</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='section-title'>TOP 10 {dataset['label']}</div>", unsafe_allow_html=True)
             for i, s in enumerate(all_scores[:10]):
                 color = _score_color(s["total"])
                 st.markdown(
@@ -705,7 +705,7 @@ def main():
                 )
 
         with col_bot:
-            st.markdown("<div class='section-title'>BOTTOM 10 SUPPLY CHAINS</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='section-title'>BOTTOM 10 {dataset['label']}</div>", unsafe_allow_html=True)
             bottom = all_scores[-10:]
             bottom.reverse()
             for i, s in enumerate(bottom):
